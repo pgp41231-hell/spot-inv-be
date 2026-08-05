@@ -1,0 +1,230 @@
+{
+  "info": {
+    "_postman_id": "f7eac9dd-2c35-4878-9c31-c5ba06eddbd0",
+    "name": "Spot-InV Backend API",
+    "description": "Import this collection into Postman. Set baseUrl to localhost:3000 for reliable demo data. The Vercel demo uses in-memory data, which can reset between serverless requests. Default demo identity is an admin; override x-user-role on individual requests to test requester, approver, or scorekeeper access.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "userId", "value": "demo-admin" },
+    { "key": "userEmail", "value": "demo-admin@example.edu" },
+    { "key": "userRole", "value": "admin" },
+    { "key": "venueId", "value": "" },
+    { "key": "equipmentId", "value": "" },
+    { "key": "bookingId", "value": "" },
+    { "key": "approvalFlowId", "value": "" },
+    { "key": "blackoutId", "value": "" },
+    { "key": "committeeId", "value": "" },
+    { "key": "galleryId", "value": "" },
+    { "key": "tournamentId", "value": "" },
+    { "key": "matchId", "value": "" },
+    { "key": "cronSecret", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.request.headers.upsert({ key: 'x-user-id', value: pm.collectionVariables.get('userId') });",
+          "pm.request.headers.upsert({ key: 'x-user-email', value: pm.collectionVariables.get('userEmail') });",
+          "pm.request.headers.upsert({ key: 'x-user-role', value: pm.collectionVariables.get('userRole') });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Public",
+      "item": [
+        {
+          "name": "Health",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/health" }
+        },
+        {
+          "name": "OpenAPI Contract",
+          "request": { "method": "GET", "url": "{{baseUrl}}/openapi.yaml" }
+        },
+        {
+          "name": "Public Venues",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/venues?category=ground&q=main" }
+        },
+        {
+          "name": "Public Equipment",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/equipment?category=ball&q=football" }
+        },
+        {
+          "name": "Public Availability",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/availability?resourceType=venue&resourceId={{venueId}}&from=2027-01-01T00:00:00.000Z&to=2027-01-02T00:00:00.000Z" }
+        },
+        {
+          "name": "Public Committee Members",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/committee" }
+        },
+        {
+          "name": "Public Event Gallery",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/gallery" }
+        },
+        {
+          "name": "Public Tournaments",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/tournaments" }
+        },
+        {
+          "name": "Public Matches",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/matches?tournamentId={{tournamentId}}" }
+        }
+      ]
+    },
+    {
+      "name": "02 - Identity",
+      "item": [
+        {
+          "name": "Current Demo User",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/me" }
+        }
+      ]
+    },
+    {
+      "name": "03 - Venues",
+      "item": [
+        {
+          "name": "Create Venue",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Main Football Ground\",\n  \"category\": \"ground\",\n  \"location\": \"Sports Complex\",\n  \"capacity\": 80,\n  \"amenities\": [\"floodlights\", \"scoreboard\"],\n  \"rules\": { \"advanceBookingDays\": 14 }\n}" },
+            "url": "{{baseUrl}}/api/v1/venues"
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('venueId', pm.response.json().data.id);"] } }]
+        },
+        {
+          "name": "List Venues",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/venues?active=true&category=ground&q=football" }
+        },
+        {
+          "name": "Get Venue",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/venues/{{venueId}}" }
+        },
+        {
+          "name": "Update Venue",
+          "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"capacity\": 100,\n  \"amenities\": [\"floodlights\", \"scoreboard\", \"drinking-water\"]\n}" }, "url": "{{baseUrl}}/api/v1/venues/{{venueId}}" }
+        },
+        {
+          "name": "Deactivate Venue",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/venues/{{venueId}}" }
+        }
+      ]
+    },
+    {
+      "name": "04 - Equipment",
+      "item": [
+        {
+          "name": "Create Equipment",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Badminton Racquet\",\n  \"category\": \"racquet\",\n  \"location\": \"Equipment Desk\",\n  \"quantity\": 12,\n  \"condition\": \"good\",\n  \"metadata\": { \"brand\": \"Yonex\" }\n}" }, "url": "{{baseUrl}}/api/v1/equipment" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('equipmentId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "List Equipment", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/equipment?active=true&category=racquet&q=badminton" } },
+        { "name": "Get Equipment", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/equipment/{{equipmentId}}" } },
+        { "name": "Update Equipment", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"quantity\": 15,\n  \"condition\": \"excellent\"\n}" }, "url": "{{baseUrl}}/api/v1/equipment/{{equipmentId}}" } },
+        { "name": "Deactivate Equipment", "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/equipment/{{equipmentId}}" } }
+      ]
+    },
+    {
+      "name": "05 - Approval Flows",
+      "item": [
+        {
+          "name": "Create Venue Approval Flow",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Ground Approval Flow\",\n  \"resourceType\": \"venue\",\n  \"resourceId\": \"{{venueId}}\",\n  \"steps\": [\n    { \"label\": \"Sports Committee Review\", \"role\": \"approver\" }\n  ]\n}" }, "url": "{{baseUrl}}/api/v1/admin/approval-flows" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('approvalFlowId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "List Approval Flows", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/approval-flows" } }
+      ]
+    },
+    {
+      "name": "06 - Bookings",
+      "item": [
+        {
+          "name": "Create Venue Booking",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-1" }, { "key": "x-user-email", "value": "requester-1@example.edu" }], "body": { "mode": "raw", "raw": "{\n  \"resourceType\": \"venue\",\n  \"resourceId\": \"{{venueId}}\",\n  \"title\": \"Football Training\",\n  \"purpose\": \"Practice session\",\n  \"startAt\": \"2027-01-10T10:00:00.000Z\",\n  \"endAt\": \"2027-01-10T11:00:00.000Z\"\n}" }, "url": "{{baseUrl}}/api/v1/bookings" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('bookingId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "List My Bookings", "request": { "method": "GET", "header": [{ "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-1" }, { "key": "x-user-email", "value": "requester-1@example.edu" }], "url": "{{baseUrl}}/api/v1/bookings" } },
+        { "name": "Get Booking", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}" } },
+        { "name": "Update Booking", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"title\": \"Football Training - Updated\",\n  \"endAt\": \"2027-01-10T11:30:00.000Z\"\n}" }, "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}" } },
+        { "name": "Cancel Booking", "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}/cancel" } },
+        {
+          "name": "Create Equipment Reservation",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"resourceType\": \"equipment\",\n  \"resourceId\": \"{{equipmentId}}\",\n  \"title\": \"Badminton Practice\",\n  \"quantity\": 2,\n  \"startAt\": \"2027-01-11T10:00:00.000Z\",\n  \"endAt\": \"2027-01-11T12:00:00.000Z\"\n}" }, "url": "{{baseUrl}}/api/v1/bookings" }
+        }
+      ]
+    },
+    {
+      "name": "07 - Approvals",
+      "item": [
+        { "name": "Pending Approvals", "request": { "method": "GET", "header": [{ "key": "x-user-role", "value": "approver" }, { "key": "x-user-id", "value": "approver-1" }, { "key": "x-user-email", "value": "approver-1@example.edu" }], "url": "{{baseUrl}}/api/v1/approvals/pending" } },
+        { "name": "Approve Booking", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "approver" }, { "key": "x-user-id", "value": "approver-1" }, { "key": "x-user-email", "value": "approver-1@example.edu" }], "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approve\",\n  \"comment\": \"Approved for training\"\n}" }, "url": "{{baseUrl}}/api/v1/approvals/{{bookingId}}/decision" } },
+        { "name": "Reject Booking", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"decision\": \"reject\",\n  \"comment\": \"Use a different time slot\"\n}" }, "url": "{{baseUrl}}/api/v1/approvals/{{bookingId}}/decision" } }
+      ]
+    },
+    {
+      "name": "08 - Blackouts and Reports",
+      "item": [
+        {
+          "name": "Create Blackout",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"resourceType\": \"venue\",\n  \"resourceId\": \"{{venueId}}\",\n  \"startAt\": \"2027-02-01T00:00:00.000Z\",\n  \"endAt\": \"2027-02-02T00:00:00.000Z\",\n  \"reason\": \"Tournament maintenance\"\n}" }, "url": "{{baseUrl}}/api/v1/admin/blackouts" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('blackoutId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "List Blackouts", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/blackouts?resourceType=venue&resourceId={{venueId}}" } },
+        { "name": "Utilization Report", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/reports/utilization?from=2027-01-01T00:00:00.000Z&to=2027-02-28T23:59:59.000Z" } },
+        { "name": "Audit Log", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/audit-log?limit=100" } }
+      ]
+    },
+    {
+      "name": "09 - User Administration",
+      "item": [
+        { "name": "List Users", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/users" } },
+        { "name": "Set User Role", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"role\": \"approver\" }" }, "url": "{{baseUrl}}/api/v1/admin/users/requester-1/role" } }
+      ]
+    },
+    {
+      "name": "10 - Sports Content",
+      "item": [
+        {
+          "name": "Create Committee Member",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Sports Secretary\",\n  \"title\": \"Sports Secretary\",\n  \"email\": \"sports@example.edu\",\n  \"responsibilities\": \"Venue approvals and tournament operations\",\n  \"displayOrder\": 1\n}" }, "url": "{{baseUrl}}/api/v1/committee" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('committeeId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "Update Committee Member", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"Head - Sports Committee\" }" }, "url": "{{baseUrl}}/api/v1/committee/{{committeeId}}" } },
+        { "name": "List Committee Members", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/committee" } },
+        {
+          "name": "Create Gallery Item",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"title\": \"Sangram Opening Ceremony\",\n  \"eventName\": \"Sangram 2027\",\n  \"occurredOn\": \"2027-01-05\",\n  \"mediaUrl\": \"https://images.example.edu/sangram-opening.jpg\",\n  \"caption\": \"Opening ceremony at the sports complex\"\n}" }, "url": "{{baseUrl}}/api/v1/gallery" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('galleryId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "Update Gallery Item", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"caption\": \"Updated gallery caption\" }" }, "url": "{{baseUrl}}/api/v1/gallery/{{galleryId}}" } },
+        { "name": "List Gallery", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/gallery" } },
+        {
+          "name": "Create Tournament",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Sangram 2027\",\n  \"description\": \"Annual intra-institute sports tournament\",\n  \"startsOn\": \"2027-01-05\",\n  \"endsOn\": \"2027-01-12\",\n  \"status\": \"published\"\n}" }, "url": "{{baseUrl}}/api/v1/tournaments" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('tournamentId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "Update Tournament", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"status\": \"live\" }" }, "url": "{{baseUrl}}/api/v1/tournaments/{{tournamentId}}" } },
+        { "name": "List Tournaments", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/tournaments" } },
+        {
+          "name": "Create Match",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "scorekeeper" }, { "key": "x-user-id", "value": "scorekeeper-1" }, { "key": "x-user-email", "value": "scorekeeper-1@example.edu" }], "body": { "mode": "raw", "raw": "{\n  \"tournamentId\": \"{{tournamentId}}\",\n  \"sport\": \"Football\",\n  \"homeTeam\": \"PGP 1\",\n  \"awayTeam\": \"PGP 2\",\n  \"venueId\": \"{{venueId}}\",\n  \"startsAt\": \"2027-01-07T16:00:00.000Z\",\n  \"status\": \"scheduled\",\n  \"homeScore\": { \"goals\": 0 },\n  \"awayScore\": { \"goals\": 0 }\n}" }, "url": "{{baseUrl}}/api/v1/matches" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('matchId', pm.response.json().data.id);"] } }]
+        },
+        { "name": "Update Live Score", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "scorekeeper" }, { "key": "x-user-id", "value": "scorekeeper-1" }, { "key": "x-user-email", "value": "scorekeeper-1@example.edu" }], "body": { "mode": "raw", "raw": "{ \"status\": \"live\", \"homeScore\": { \"goals\": 1 }, \"awayScore\": { \"goals\": 0 } }" }, "url": "{{baseUrl}}/api/v1/matches/{{matchId}}" } },
+        { "name": "List Matches", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/matches?tournamentId={{tournamentId}}" } }
+      ]
+    },
+    {
+      "name": "11 - Scheduled Jobs",
+      "item": [
+        { "name": "Dispatch Notification Outbox", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{cronSecret}}" }], "url": "{{baseUrl}}/api/v1/jobs/reminders" } }
+      ]
+    }
+  ]
+}

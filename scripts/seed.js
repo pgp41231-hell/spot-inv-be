@@ -1,7 +1,8 @@
 import { PostgresStore } from "../src/store/postgres.js";
 
-if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-const store = new PostgresStore(process.env.DATABASE_URL);
+const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+if (!databaseUrl) throw new Error("Set DATABASE_URL or POSTGRES_URL before seeding");
+const store = new PostgresStore(databaseUrl);
 const admin = {
   id: process.env.SEED_ADMIN_SUB || "seed-admin",
   email: process.env.SEED_ADMIN_EMAIL || "sports.committee@example.edu",

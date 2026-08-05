@@ -21,7 +21,9 @@ export function loadConfig(env = process.env) {
     nodeEnv,
     port: Number(env.PORT || 3000),
     allowedOrigins,
-    databaseUrl: env.DATABASE_URL || "",
+    // Supabase's Vercel integration provides POSTGRES_URL automatically.
+    // DATABASE_URL remains the portable option for a manually configured project.
+    databaseUrl: env.DATABASE_URL || env.POSTGRES_URL || "",
     auth: {
       mode: authMode,
       issuer: env.AUTH_ISSUER || "",

@@ -11,7 +11,7 @@ Requirements: Node.js 20+ and pnpm/npm.
 3. Run `pnpm dev`.
 4. Open `http://localhost:3000/api/v1/health`.
 
-Without `DATABASE_URL`, the API uses an in-memory store and data resets on restart or between Vercel serverless instances. This is intentional for the temporary demo deployment.
+Without `DATABASE_URL` (or the `POSTGRES_URL` supplied by the Supabase Vercel integration), the API uses an in-memory store and data resets on restart or between Vercel serverless instances. This is intentional for the temporary demo deployment.
 
 For local development authentication, send these headers:
 
@@ -26,12 +26,14 @@ The deployed demo defaults to an admin identity. It is for development only; swi
 
 ## Database
 
-Set `DATABASE_URL` to a pooled PostgreSQL URL, then run:
+For Supabase, set `DATABASE_URL` to the **Transaction pooler** connection URL (port `6543`) in Vercel Project Settings > Environment Variables. If Supabase was installed from the Vercel Marketplace and connected to this project, Vercel injects `POSTGRES_URL` and no duplicate variable is needed. Then run the migration with a direct connection URL:
 
 ```bash
-pnpm db:migrate
+DIRECT_DATABASE_URL="your Supabase direct connection URL" pnpm db:migrate
 pnpm db:seed
 ```
+
+On Windows PowerShell, use `$env:DIRECT_DATABASE_URL="your Supabase direct connection URL"; pnpm db:migrate`. Vercel does not run migrations automatically; run them once before relying on the persistent database. Keep `AUTH_MODE=demo` until OAuth is introduced, then redeploy after adding or changing environment variables.
 
 The migration creates the relational model, overlap constraints, approval workflow, notification outbox, indexes, and append-only audit guard. Set `SEED_ADMIN_SUB`, `SEED_ADMIN_EMAIL`, and `SEED_ADMIN_NAME` before seeding if desired.
 

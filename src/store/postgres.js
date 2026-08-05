@@ -1,5 +1,7 @@
-import { neon } from "@neondatabase/serverless";
+import pg from "pg";
 import { conflict, notFound } from "../errors.js";
+
+const { Pool } = pg;
 
 const camel = (row) => {
   if (!row) return row;
@@ -34,10 +36,23 @@ const CONTENT = {
 
 export class PostgresStore {
   constructor(databaseUrl) {
-    this.sql = neon(databaseUrl);
+    // `pg` works with standard PostgreSQL URLs, including Supabase's Supavisor
+    // transaction pooler URL that is appropriate for Vercel serverless functions.
+    this.pool = new Pool({
+      connectionString: databaseUrl,
+      ssl: databaseUrl.includes("localhost") ? false : { rejectUnauthorized: false },
+      max: 1,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 10_000,
+    });
+    this.sql = {
+      query: async (text, values = []) => (await this.pool.query(text, values)).rows,
+    };
   }
 
-  async close() {}
+  async close() {
+    await this.pool.end();
+  }
 
   async ensureUser(user) {
     const result = await this.sql.query(
