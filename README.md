@@ -49,7 +49,7 @@ The tests exercise the API with the in-memory adapter and cover permissions, pri
 2. Deploy with no environment variables for temporary demo mode, then verify `/api/v1/health` and `/openapi.yaml`.
 3. Before a real launch, add a PostgreSQL provider, configure `DATABASE_URL` and OIDC values, run the migration/seed, and set `AUTH_MODE=oidc`.
 
-Vercel detects the Express export in `api/index.js`. Add the Vercel cron configuration only after an email provider and `CRON_SECRET` are configured.
+Vercel routes all requests to the Express export in `api/index.js` using the rewrite in `vercel.json`. Add the Vercel cron configuration only after an email provider and `CRON_SECRET` are configured.
 
 ## API groups
 
