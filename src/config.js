@@ -7,6 +7,13 @@ const splitCsv = (value) =>
 export function loadConfig(env = process.env) {
   const nodeEnv = env.NODE_ENV || "development";
   const allowedOrigins = splitCsv(env.ALLOWED_ORIGINS);
+  const databaseUrl = [
+    env.DATABASE_URL,
+    env.POSTGRES_URL,
+    env.POSTGRES_PRISMA_URL,
+    env.POSTGRES_URL_NON_POOLING,
+    env.SUPABASE_DB_URL,
+  ].find((value) => String(value || "").trim()) || "";
   const hasOidcSettings = Boolean(env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI);
   const authMode = env.AUTH_MODE || (hasOidcSettings ? "oidc" : "demo");
 
@@ -16,14 +23,15 @@ export function loadConfig(env = process.env) {
   if (authMode === "oidc" && !hasOidcSettings) {
     throw new Error("AUTH_MODE=oidc requires AUTH_ISSUER, AUTH_AUDIENCE, and AUTH_JWKS_URI");
   }
+  if ((env.VERCEL || env.REQUIRE_DATABASE === "true") && !databaseUrl) {
+    throw new Error("Persistent database is required, but no Supabase/PostgreSQL connection URL is available");
+  }
 
   return {
     nodeEnv,
     port: Number(env.PORT || 3000),
     allowedOrigins,
-    // Supabase's Vercel integration provides POSTGRES_URL automatically.
-    // DATABASE_URL remains the portable option for a manually configured project.
-    databaseUrl: env.DATABASE_URL || env.POSTGRES_URL || "",
+    databaseUrl,
     auth: {
       mode: authMode,
       issuer: env.AUTH_ISSUER || "",

@@ -1,6 +1,10 @@
 import { PostgresStore } from "../src/store/postgres.js";
 
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const databaseUrl = process.env.DATABASE_URL
+  || process.env.POSTGRES_URL
+  || process.env.POSTGRES_PRISMA_URL
+  || process.env.POSTGRES_URL_NON_POOLING
+  || process.env.SUPABASE_DB_URL;
 if (!databaseUrl) throw new Error("Set DATABASE_URL or POSTGRES_URL before seeding");
 const store = new PostgresStore(databaseUrl);
 const admin = {

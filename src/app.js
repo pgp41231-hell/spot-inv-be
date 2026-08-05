@@ -143,7 +143,11 @@ export function createApp(options = {}) {
 
   app.get("/", (_req, res) => res.json({ service: "IIM Lucknow Sports Operations API", docs: "/api/docs", health: "/api/v1/health" }));
   app.get("/api/docs", (_req, res) => res.redirect("/openapi.yaml"));
-  app.get("/api/v1/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+  app.get("/api/v1/health", (_req, res) => res.json({
+    status: "ok",
+    storage: config.databaseUrl ? "postgres" : "memory",
+    timestamp: new Date().toISOString(),
+  }));
 
   app.get("/api/v1/public/venues", async (req, res) => {
     const data = await store.listResources("venue", { active: true, category: req.query.category, q: req.query.q });

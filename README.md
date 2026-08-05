@@ -26,14 +26,16 @@ The deployed demo defaults to an admin identity. It is for development only; swi
 
 ## Database
 
-For Supabase, set `DATABASE_URL` to the **Transaction pooler** connection URL (port `6543`) in Vercel Project Settings > Environment Variables. If Supabase was installed from the Vercel Marketplace and connected to this project, Vercel injects `POSTGRES_URL` and no duplicate variable is needed. Then run the migration with a direct connection URL:
+For Supabase, set `DATABASE_URL` to the **Transaction pooler** connection URL (port `6543`) in Vercel Project Settings > Environment Variables. If Supabase was installed from the Vercel Marketplace and connected to this project, Vercel injects `POSTGRES_URL` and no duplicate variable is needed. Vercel deployments run the idempotent schema migration automatically through the `vercel-build` script. A deployment now fails if no database URL is available, preventing accidental use of temporary in-memory storage.
+
+To run the migration manually, use a direct connection URL:
 
 ```bash
 DIRECT_DATABASE_URL="your Supabase direct connection URL" pnpm db:migrate
 pnpm db:seed
 ```
 
-On Windows PowerShell, use `$env:DIRECT_DATABASE_URL="your Supabase direct connection URL"; pnpm db:migrate`. Vercel does not run migrations automatically; run them once before relying on the persistent database. Keep `AUTH_MODE=demo` until OAuth is introduced, then redeploy after adding or changing environment variables.
+On Windows PowerShell, use `$env:DIRECT_DATABASE_URL="your Supabase direct connection URL"; pnpm db:migrate`. Keep `AUTH_MODE=demo` until OAuth is introduced, then redeploy after adding or changing environment variables. The health response reports `storage: "postgres"` when the deployed function receives the database configuration.
 
 The migration creates the relational model, overlap constraints, approval workflow, notification outbox, indexes, and append-only audit guard. Set `SEED_ADMIN_SUB`, `SEED_ADMIN_EMAIL`, and `SEED_ADMIN_NAME` before seeding if desired.
 

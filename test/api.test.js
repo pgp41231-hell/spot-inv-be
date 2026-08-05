@@ -55,6 +55,8 @@ test("OpenAPI contract is served", async () => {
 
 test("demo configuration starts without database or SSO, while OIDC remains explicit", () => {
   assert.equal(loadConfig({ NODE_ENV: "production" }).auth.mode, "demo");
+  assert.equal(loadConfig({ POSTGRES_URL: "postgresql://example" }).databaseUrl, "postgresql://example");
+  assert.throws(() => loadConfig({ VERCEL: "1" }), /Persistent database is required/);
   assert.throws(() => loadConfig({ AUTH_MODE: "oidc" }), /AUTH_MODE=oidc requires/);
 });
 
