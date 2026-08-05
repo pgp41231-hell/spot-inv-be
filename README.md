@@ -6,12 +6,12 @@ Node.js backend for the future sports portal frontend. It covers venue and equip
 
 Requirements: Node.js 20+ and pnpm/npm.
 
-1. Copy `.env.example` to `.env` and set `ALLOW_DEV_AUTH=true` for local development.
+1. Copy `.env.example` to `.env`. It starts in `AUTH_MODE=demo`, so no login setup is needed.
 2. Install dependencies with `pnpm install`.
 3. Run `pnpm dev`.
 4. Open `http://localhost:3000/api/v1/health`.
 
-Without `DATABASE_URL`, development uses an in-memory store and data resets on restart. PostgreSQL is mandatory when `NODE_ENV=production`.
+Without `DATABASE_URL`, the API uses an in-memory store and data resets on restart or between Vercel serverless instances. This is intentional for the temporary demo deployment.
 
 For local development authentication, send these headers:
 
@@ -22,7 +22,7 @@ x-user-name: Example User
 x-user-role: requester | approver | scorekeeper | admin
 ```
 
-This mode cannot be enabled in production.
+The deployed demo defaults to an admin identity. It is for development only; switch to OIDC before storing real user data.
 
 ## Database
 
@@ -46,12 +46,10 @@ The tests exercise the API with the in-memory adapter and cover permissions, pri
 ## Deploy to Vercel
 
 1. Push this directory to a Git provider or run `vercel` from the project root.
-2. Add a PostgreSQL provider (Neon is suitable) from Vercel Marketplace and connect it to the project.
-3. Configure `DATABASE_URL`, `AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_JWKS_URI`, `ALLOWED_ORIGINS`, `CRON_SECRET`, and the optional email webhook variables for Production and Preview.
-4. Run the migration against the production database, then seed it once.
-5. Deploy and verify `/api/v1/health` and `/openapi.yaml`.
+2. Deploy with no environment variables for temporary demo mode, then verify `/api/v1/health` and `/openapi.yaml`.
+3. Before a real launch, add a PostgreSQL provider, configure `DATABASE_URL` and OIDC values, run the migration/seed, and set `AUTH_MODE=oidc`.
 
-Vercel detects the Express export in `api/index.js`. The daily 08:00 UTC cron calls `/api/v1/jobs/reminders`; Vercel sends `CRON_SECRET` as a bearer token when the project cron secret is configured. Pro plans can safely increase the schedule frequency in `vercel.json`.
+Vercel detects the Express export in `api/index.js`. Add the Vercel cron configuration only after an email provider and `CRON_SECRET` are configured.
 
 ## API groups
 

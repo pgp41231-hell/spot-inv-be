@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { forbidden, unauthorized } from "./errors.js";
+import { forbidden } from "./errors.js";
 import { ROLES } from "./domain.js";
 
 function bearerToken(header) {
@@ -8,7 +8,7 @@ function bearerToken(header) {
 }
 
 export function createAuthenticator(config) {
-  const jwks = config.jwksUri
+  const jwks = config.mode === "oidc"
     ? createRemoteJWKSet(new URL(config.jwksUri))
     : null;
 
@@ -28,18 +28,16 @@ export function createAuthenticator(config) {
       };
     }
 
-    if (config.allowDevAuth) {
-      const role = String(req.headers["x-user-role"] || "requester");
-      if (!ROLES.includes(role)) throw unauthorized("Invalid development role");
-      return {
-        id: String(req.headers["x-user-id"] || "local-user"),
-        email: String(req.headers["x-user-email"] || "local-user@example.edu"),
-        name: String(req.headers["x-user-name"] || "Local User"),
-        role,
-      };
-    }
-
-    throw unauthorized();
+    // Temporary bootstrap mode for frontend development before institutional SSO is connected.
+    // Never use this mode for a public production launch with real user data.
+    const role = String(req.headers["x-user-role"] || "admin");
+    if (!ROLES.includes(role)) throw new Error("Invalid demo role");
+    return {
+      id: String(req.headers["x-user-id"] || "demo-admin"),
+      email: String(req.headers["x-user-email"] || "demo-admin@example.edu"),
+      name: String(req.headers["x-user-name"] || "Demo Admin"),
+      role,
+    };
   };
 }
 

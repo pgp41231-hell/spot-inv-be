@@ -27,8 +27,8 @@ Payments, fines, a native mobile app, alumni/inter-college access, and automated
 ## Implementation decisions
 
 - Node.js 20+ with Express, deployed as one Vercel Function.
-- PostgreSQL for durable relational records; Neon through Vercel Marketplace is the recommended provider.
-- Institutional identity is validated as an OIDC JWT. A development-header mode exists only for local work and is rejected in production.
+- Temporary demo mode uses in-memory data and a no-login demo admin identity so the frontend can be built immediately. Data is not durable in this mode.
+- PostgreSQL and institutional OIDC/JWT are deferred launch integrations; Neon through Vercel Marketplace is the recommended database provider.
 - Roles are requester, approver, scorekeeper, and admin.
 - Venue overlaps are blocked at both application and database levels. Equipment reservations observe available quantity.
 - Approval flows can be default-per-resource-type or resource-specific and contain ordered steps.

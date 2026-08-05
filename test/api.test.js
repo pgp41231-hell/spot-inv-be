@@ -53,9 +53,9 @@ test("OpenAPI contract is served", async () => {
   assert.match(await response.text(), /^openapi: 3\.1\.0/m);
 });
 
-test("production configuration fails closed when security settings are absent", () => {
-  assert.throws(() => loadConfig({ NODE_ENV: "production" }), /Missing production environment variables/);
-  assert.throws(() => loadConfig({ NODE_ENV: "production", ALLOW_DEV_AUTH: "true" }), /ALLOW_DEV_AUTH/);
+test("demo configuration starts without database or SSO, while OIDC remains explicit", () => {
+  assert.equal(loadConfig({ NODE_ENV: "production" }).auth.mode, "demo");
+  assert.throws(() => loadConfig({ AUTH_MODE: "oidc" }), /AUTH_MODE=oidc requires/);
 });
 
 test("venue booking, duplicate prevention, approval, privacy, and audit flow", async () => {

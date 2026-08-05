@@ -15,9 +15,6 @@ const config = loadConfig();
 
 function defaultStore() {
   if (config.databaseUrl) return new PostgresStore(config.databaseUrl);
-  if (config.nodeEnv === "production") {
-    throw new Error("DATABASE_URL is required in production");
-  }
   return new MemoryStore();
 }
 
