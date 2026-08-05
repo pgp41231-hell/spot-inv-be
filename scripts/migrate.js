@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import pg from "pg";
+import { postgresConnectionConfig } from "../src/database-config.js";
 
 const databaseUrl = process.env.DIRECT_DATABASE_URL
   || process.env.POSTGRES_URL
@@ -9,10 +10,7 @@ const databaseUrl = process.env.DIRECT_DATABASE_URL
   || process.env.SUPABASE_DB_URL;
 if (!databaseUrl) throw new Error("Set DIRECT_DATABASE_URL, DATABASE_URL, or POSTGRES_URL before migrating");
 const migration = await fs.readFile(new URL("../db/migrations/001_init.sql", import.meta.url), "utf8");
-const client = new pg.Client({
-  connectionString: databaseUrl,
-  ssl: databaseUrl.includes("localhost") ? false : { rejectUnauthorized: false },
-});
+const client = new pg.Client(postgresConnectionConfig(databaseUrl));
 await client.connect();
 try {
   await client.query(migration);

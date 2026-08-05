@@ -1,5 +1,6 @@
 import pg from "pg";
 import { conflict, notFound } from "../errors.js";
+import { postgresConnectionConfig } from "../database-config.js";
 
 const { Pool } = pg;
 
@@ -39,8 +40,7 @@ export class PostgresStore {
     // `pg` works with standard PostgreSQL URLs, including Supabase's Supavisor
     // transaction pooler URL that is appropriate for Vercel serverless functions.
     this.pool = new Pool({
-      connectionString: databaseUrl,
-      ssl: databaseUrl.includes("localhost") ? false : { rejectUnauthorized: false },
+      ...postgresConnectionConfig(databaseUrl),
       max: 1,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 10_000,
