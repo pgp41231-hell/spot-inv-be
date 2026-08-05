@@ -1,0 +1,371 @@
+openapi: 3.1.0
+info:
+  title: IIM Lucknow Sports Operations API
+  version: 1.0.0
+  description: Backend contract for venue/equipment booking, approvals, sports content, reporting, and administration.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Public
+  - name: Bookings
+  - name: Approvals
+  - name: Resources
+  - name: Sports Content
+  - name: Administration
+paths:
+  /health:
+    get:
+      tags: [Public]
+      security: []
+      summary: Service health
+      responses:
+        '200': { description: Healthy }
+  /public/venues:
+    get:
+      tags: [Public]
+      security: []
+      summary: List active public venues
+      parameters:
+        - { in: query, name: category, schema: { type: string } }
+        - { in: query, name: q, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /public/equipment:
+    get:
+      tags: [Public]
+      security: []
+      summary: List active public equipment
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /public/availability:
+    get:
+      tags: [Public]
+      security: []
+      summary: Privacy-safe occupied slots
+      parameters:
+        - { in: query, name: resourceType, required: true, schema: { $ref: '#/components/schemas/ResourceType' } }
+        - { in: query, name: resourceId, schema: { type: string, format: uuid } }
+        - { in: query, name: from, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: to, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /public/{contentType}:
+    get:
+      tags: [Public]
+      security: []
+      summary: List public committee, gallery, tournament, or match content
+      parameters:
+        - in: path
+          name: contentType
+          required: true
+          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+        - { in: query, name: tournamentId, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /me:
+    get:
+      summary: Current user profile
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /venues:
+    get:
+      tags: [Resources]
+      summary: Search venues
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Resources]
+      summary: Create venue (admin)
+      requestBody: { $ref: '#/components/requestBodies/Venue' }
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+  /venues/{id}:
+    get:
+      tags: [Resources]
+      summary: Get venue
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    patch:
+      tags: [Resources]
+      summary: Update venue (admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Venue' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    delete:
+      tags: [Resources]
+      summary: Deactivate venue (admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /equipment:
+    get:
+      tags: [Resources]
+      summary: Search equipment
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Resources]
+      summary: Create equipment item (admin)
+      requestBody: { $ref: '#/components/requestBodies/Equipment' }
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+  /equipment/{id}:
+    get:
+      tags: [Resources]
+      summary: Get equipment item
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    patch:
+      tags: [Resources]
+      summary: Update equipment item (admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { $ref: '#/components/requestBodies/Equipment' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    delete:
+      tags: [Resources]
+      summary: Deactivate equipment item (admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /bookings:
+    get:
+      tags: [Bookings]
+      summary: List the current user's bookings (admin can list all)
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Bookings]
+      summary: Create a venue or equipment booking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookingInput' }
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+        '409': { $ref: '#/components/responses/ErrorResponse' }
+  /bookings/{id}:
+    get:
+      tags: [Bookings]
+      summary: Get an authorized booking
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    patch:
+      tags: [Bookings]
+      summary: Edit a pending booking
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /bookings/{id}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Cancel an owned booking
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /approvals/pending:
+    get:
+      tags: [Approvals]
+      summary: Current approver queue
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /approvals/{bookingId}/decision:
+    post:
+      tags: [Approvals]
+      summary: Approve or reject the current sequential step
+      parameters:
+        - { in: path, name: bookingId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                comment: { type: string, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /{contentType}:
+    get:
+      tags: [Sports Content]
+      summary: List managed sports content
+      parameters:
+        - in: path
+          name: contentType
+          required: true
+          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Sports Content]
+      summary: Create sports content (admin; scorekeeper also allowed for matches)
+      parameters:
+        - in: path
+          name: contentType
+          required: true
+          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+  /{contentType}/{id}:
+    patch:
+      tags: [Sports Content]
+      summary: Update sports content
+      parameters:
+        - in: path
+          name: contentType
+          required: true
+          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /admin/users:
+    get:
+      tags: [Administration]
+      summary: List users
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /admin/users/{id}/role:
+    patch:
+      tags: [Administration]
+      summary: Change a user's role
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /admin/approval-flows:
+    get:
+      tags: [Administration]
+      summary: List approval flows
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Administration]
+      summary: Create an ordered approval flow
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+  /admin/blackouts:
+    get:
+      tags: [Administration]
+      summary: List blocked periods
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Administration]
+      summary: Block a period from booking
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+  /admin/reports/utilization:
+    get:
+      tags: [Administration]
+      summary: Booking and booked-hour utilization
+      parameters:
+        - { in: query, name: from, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: to, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /admin/audit-log:
+    get:
+      tags: [Administration]
+      summary: Read append-only audit history
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /jobs/reminders:
+    get:
+      tags: [Administration]
+      summary: Dispatch due notification outbox items (Vercel Cron)
+      responses:
+        '200': { description: Dispatch result }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+  schemas:
+    ResourceType: { type: string, enum: [venue, equipment] }
+    VenueInput:
+      type: object
+      required: [name, category, capacity]
+      properties:
+        name: { type: string }
+        category: { type: string }
+        location: { type: [string, 'null'] }
+        capacity: { type: integer, minimum: 1 }
+        amenities: { type: array, items: { type: string } }
+        rules: { type: object, additionalProperties: true }
+        active: { type: boolean }
+    EquipmentInput:
+      type: object
+      required: [name, category, quantity]
+      properties:
+        name: { type: string }
+        category: { type: string }
+        location: { type: [string, 'null'] }
+        quantity: { type: integer, minimum: 1 }
+        condition: { type: string, enum: [excellent, good, fair, maintenance, retired] }
+        metadata: { type: object, additionalProperties: true }
+        active: { type: boolean }
+    BookingInput:
+      type: object
+      required: [resourceType, resourceId, title, startAt, endAt]
+      properties:
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string, format: uuid }
+        title: { type: string, maxLength: 160 }
+        purpose: { type: [string, 'null'] }
+        quantity: { type: integer, minimum: 1, default: 1 }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+            requestId: { type: string, format: uuid }
+  requestBodies:
+    Venue:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/VenueInput' } } }
+    Equipment:
+      required: true
+      content: { application/json: { schema: { $ref: '#/components/schemas/EquipmentInput' } } }
+  responses:
+    ItemResponse:
+      description: One resource
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { data: {} }
+    ListResponse:
+      description: Resource list
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: { type: array, items: {} }
+    ErrorResponse:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
