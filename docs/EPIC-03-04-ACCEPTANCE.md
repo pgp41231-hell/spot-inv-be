@@ -175,12 +175,47 @@ Ask someone who has not seen this work to read only these three files:
 
 ## Result log
 
-| Gate | Date | Run by | Result | Notes |
-|---|---|---|---|---|
-| A | | | | |
-| B | | | | |
-| C | | | | |
-| D | | | | |
-| E | | | | |
-| F | | | | |
-| G | | | | |
+First run, before the pull requests were opened.
+
+| Gate | Date | Result | Notes |
+|---|---|---|---|
+| A — backend tests | 2026-08-06 | **Pass** | 40/40. Includes the 9 pre-existing `api.test.js` cases unchanged, so no regression to other teams' endpoints. |
+| B — frontend tests | 2026-08-06 | **Pass** | 17/17 pure logic (`node --test`) and 41/41 component (`vitest`). |
+| C — contract | 2026-08-06 | **Pass** | 4/4, including the canary that proves the check still fails on an undocumented route. |
+| D — manual acceptance | 2026-08-06 | **Pass** | Walked in a browser against a local backend. See notes below. |
+| E — degradation | 2026-08-06 | **Pass** | Run against `spot-inv-be.vercel.app`, which returns 404 for `/holds` and `/public/recommendations` and sends availability with no `blackouts`/`holds` keys. |
+| F — build | 2026-08-06 | **Pass** | Clean Vite production build. |
+| G — documentation | 2026-08-06 | **Pass** | Written and re-read cold; the three documents stand on their own. |
+
+### Notes from gate D
+
+- The calendar rendered 7 days with past slots disabled and peak dots on exactly
+  17:00–21:00 IST.
+- A hold started at 05:00 and counted down; the slot showed as held to a second
+  identity, whose booking attempt was refused with `conflictType: "hold"`.
+- A blackout created by an admin while a hold was live produced a 409 on confirm,
+  and the alternatives popup offered three same-day slots with the off-peak one
+  ranked first.
+- Blacking out the whole venue made every future slot render as **Closed** to a
+  non-admin — the gap this work was meant to close.
+
+### Notes from gate E
+
+- Booking, My Bookings, and the calendar all worked against the production
+  backend. The only visible difference was the "Slot lock unavailable" notice.
+- A genuine 409 (a slot booked out from under an open wizard) produced three
+  correctly-ranked alternatives computed **in the browser**, proving the local
+  fallback matches the server's rules.
+- One console error on a clean run: the expected 404 from `POST /holds`. No
+  uncaught JavaScript errors.
+- Two test bookings created during this gate were cancelled afterwards; no other
+  team's data was touched.
+
+### Fixed while verifying
+
+- `MemoryStore.createBooking` had a real race: the conflict check and the write
+  were separated by an `await`, so two simultaneous requests could both pass.
+  Now one synchronous block, covered by a `Promise.all` test.
+- Slot buttons announced as "Peak hour" instead of their time, because `title`
+  was winning the accessible name. They now carry an explicit `aria-label`
+  leading with the time.
