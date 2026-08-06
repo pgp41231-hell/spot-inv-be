@@ -8,6 +8,8 @@ import { loadConfig } from "./config.js";
 import { createAuthenticator, requireRoles } from "./auth.js";
 import { AppError, badRequest, forbidden } from "./errors.js";
 import { assertBookingOwnerOrAdmin, publicBookingView, ROLES, validateInterval } from "./domain.js";
+import { assertHoldMatchesBooking, HOLD_TTL_MINUTES, holdPublicView, isHoldActive } from "./holds.js";
+import { describeRecommendations, DEFAULT_LIMIT, DEFAULT_WINDOW_DAYS, isPeak, recommendSlots } from "./recommendations.js";
 import { MemoryStore } from "./store/memory.js";
 import { PostgresStore } from "./store/postgres.js";
 
@@ -51,6 +53,16 @@ const bookingSchema = z.object({
   startAt: iso,
   endAt: iso,
   metadata: z.record(z.string(), z.unknown()).default({}),
+  // EPIC-03 / US-04B: optional, so a client without slot-lock support still books normally.
+  holdId: id.optional(),
+});
+
+const holdSchema = z.object({
+  resourceType,
+  resourceId: id,
+  startAt: iso,
+  endAt: iso,
+  quantity: z.number().int().positive().default(1),
 });
 
 const bookingUpdateSchema = bookingSchema.pick({
@@ -119,6 +131,40 @@ async function enqueueApprovalMessages(store, booking, step) {
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// listBlackouts(type, id) returns only blackouts pinned to that exact resource,
+// so fetch them all for the type and keep the institute-wide ones too.
+async function blackoutsFor(store, { resourceType, resourceId, from, to }) {
+  const all = await store.listBlackouts(resourceType, null);
+  return all.filter((item) =>
+    (!resourceId || item.resourceId === null || item.resourceId === resourceId) &&
+    (!from || item.endAt > from) &&
+    (!to || item.startAt < to));
+}
+
+// EPIC-04 / US-05B: gather everything that occupies the search window, then hand
+// it to the pure heuristic. Kept here so the booking 409 path and the
+// recommendations endpoint always answer with exactly the same logic.
+async function alternativesFor(store, { resourceType, resourceId, startAt, endAt, limit, windowDays }) {
+  const from = new Date(new Date(startAt).getTime() - DAY_MS).toISOString();
+  const to = new Date(new Date(startAt).getTime() + (windowDays + 2) * DAY_MS).toISOString();
+  const [bookings, blackouts, holds] = await Promise.all([
+    store.listBookings({ resourceType, resourceId, from, to }),
+    blackoutsFor(store, { resourceType, resourceId, from, to }),
+    store.listActiveHolds({ resourceType, resourceId, from, to }),
+  ]);
+  return recommendSlots({
+    startAt,
+    endAt,
+    occupied: bookings.filter((item) => !["cancelled", "rejected"].includes(item.status)),
+    blackouts,
+    holds,
+    limit,
+    windowDays,
+  });
+}
+
 export function createApp(options = {}) {
   const store = options.store || defaultStore();
   const authenticate = options.authenticate || createAuthenticator(config.auth);
@@ -170,7 +216,52 @@ export function createApp(options = {}) {
     const data = (await store.listBookings(filters))
       .filter((item) => !["cancelled", "rejected"].includes(item.status))
       .map(publicBookingView);
-    res.json({ data });
+
+    // EPIC-03 / US-04A: the calendar has to grey out blackouts and live holds too.
+    // These are additive keys — `data` keeps its existing shape and meaning.
+    const [blackouts, holds] = await Promise.all([
+      blackoutsFor(store, filters),
+      store.listActiveHolds(filters),
+    ]);
+    res.json({
+      data,
+      blackouts: blackouts.map(({ id, resourceType: type, resourceId, startAt, endAt, reason }) =>
+        ({ id, resourceType: type, resourceId, startAt, endAt, reason })),
+      holds: holds.map(holdPublicView),
+    });
+  });
+
+  // EPIC-03 / US-04B: anonymised live holds, so a second student sees a slot is
+  // taken without learning who is taking it.
+  app.get("/api/v1/public/holds", async (req, res) => {
+    if (!req.query.resourceType) throw badRequest("resourceType is required");
+    const holds = await store.listActiveHolds({
+      resourceType: req.query.resourceType,
+      resourceId: req.query.resourceId,
+      from: req.query.from,
+      to: req.query.to,
+    });
+    res.json({ data: holds.map(holdPublicView), meta: { ttlMinutes: HOLD_TTL_MINUTES } });
+  });
+
+  // EPIC-04 / US-05B: alternatives for a slot that is (or might be) unavailable.
+  app.get("/api/v1/public/recommendations", async (req, res) => {
+    const { resourceType: type, resourceId, startAt, endAt } = req.query;
+    if (!type || !resourceId || !startAt || !endAt) {
+      throw badRequest("resourceType, resourceId, startAt, and endAt are required");
+    }
+    const { startAt: from, endAt: to } = validateInterval(startAt, endAt);
+    const limit = Math.min(Number(req.query.limit || DEFAULT_LIMIT), 10);
+    const windowDays = Math.min(Number(req.query.windowDays || DEFAULT_WINDOW_DAYS), 30);
+    const data = await alternativesFor(store, { resourceType: type, resourceId, startAt: from, endAt: to, limit, windowDays });
+    res.json({
+      data,
+      meta: {
+        requestedPeak: isPeak(from),
+        windowDays,
+        reason: describeRecommendations(data, { requestedPeak: isPeak(from) }),
+      },
+    });
   });
   for (const type of ["committee", "gallery", "tournaments", "matches"]) {
     app.get(`/api/v1/public/${type}`, async (req, res) => {
@@ -216,6 +307,27 @@ export function createApp(options = {}) {
     });
   }
 
+  // --- EPIC-03 / US-04B: slot holds -----------------------------------------
+  // A hold is advisory and short-lived. It stops a race during form-filling; the
+  // booking, and its database exclusion constraint, remain the source of truth.
+
+  app.get("/api/v1/holds/mine", async (req, res) => {
+    res.json({ data: await store.listHoldsForUser(req.user.id), meta: { ttlMinutes: HOLD_TTL_MINUTES } });
+  });
+
+  app.post("/api/v1/holds", async (req, res) => {
+    const input = parse(holdSchema, req.body);
+    Object.assign(input, validateInterval(input.startAt, input.endAt));
+    const resource = await store.getResource(input.resourceType, input.resourceId);
+    if (!resource.active) throw badRequest("The selected resource is inactive");
+    const data = await store.createHold(input, req.user);
+    res.status(201).json({ data, meta: { ttlMinutes: HOLD_TTL_MINUTES } });
+  });
+
+  app.delete("/api/v1/holds/:id", async (req, res) => {
+    res.json({ data: await store.releaseHold(req.params.id, req.user) });
+  });
+
   app.get("/api/v1/bookings", async (req, res) => {
     const filters = { ...req.query };
     if (req.user.role !== "admin") filters.requesterId = req.user.id;
@@ -227,11 +339,41 @@ export function createApp(options = {}) {
     res.json({ data: booking });
   });
   app.post("/api/v1/bookings", async (req, res) => {
-    const input = parse(bookingSchema, req.body);
+    const { holdId, ...input } = parse(bookingSchema, req.body);
     Object.assign(input, validateInterval(input.startAt, input.endAt));
     const resource = await store.getResource(input.resourceType, input.resourceId);
     if (!resource.active) throw badRequest("The selected resource is inactive");
-    const data = await store.createBooking(input, req.user);
+
+    // US-04B: a hold only counts if it is yours, still live, and on this exact slot.
+    if (holdId) {
+      const hold = await store.getHold(holdId);
+      if (hold.heldBy !== req.user.id) throw forbidden("That hold belongs to someone else");
+      if (!isHoldActive(hold)) throw badRequest("Your hold on this slot has expired");
+      assertHoldMatchesBooking(hold, input);
+    }
+
+    let data;
+    try {
+      data = await store.createBooking(input, req.user);
+    } catch (error) {
+      // US-05C: answer the clash and the way out in one response, so the frontend
+      // can offer alternatives without a second round-trip.
+      if (error.status === 409) {
+        error.details = {
+          ...error.details,
+          alternatives: await alternativesFor(store, {
+            resourceType: input.resourceType,
+            resourceId: input.resourceId,
+            startAt: input.startAt,
+            endAt: input.endAt,
+            limit: DEFAULT_LIMIT,
+            windowDays: DEFAULT_WINDOW_DAYS,
+          }),
+        };
+      }
+      throw error;
+    }
+    if (holdId) await store.consumeHold(holdId, data.id);
     await store.enqueueNotification({
       recipient: req.user.email,
       template: data.status === "approved" ? "booking-approved" : "booking-received",
