@@ -64,3 +64,28 @@ Vercel routes all requests to the Express export in `api/index.js` using the rew
 - Admin: users/roles, resources, blackout windows, approval flows, content, utilization, audit log
 
 The machine-readable contract is in `public/openapi.yaml`. The source-to-backend interpretation is in `docs/requirements-summary.md`.
+
+## Slot holds and recommendations (EPIC-03 / EPIC-04)
+
+Two capabilities were added for the Timeboxed Venue Booking Engine and the
+Lightweight AI Recommendation Feature:
+
+- **Slot holds (US-04B)** — `POST /api/v1/holds` claims a slot for five minutes
+  while the requester fills in the booking form, so two people cannot both spend
+  a minute typing and have one of them lose. Holds are advisory and expire
+  passively; the booking and its overlap constraint remain the source of truth.
+  See also `GET /api/v1/holds/mine`, `DELETE /api/v1/holds/:id`, and the
+  anonymised `GET /api/v1/public/holds`.
+- **Alternative slots (US-05A/B)** — `GET /api/v1/public/recommendations` returns
+  up to three non-conflicting slots of the same duration, preferring same-day and
+  off-peak times, each with a plain-English reason. An empty list is a valid
+  answer, not an error.
+
+`GET /api/v1/public/availability` now also returns `blackouts` and `holds` so a
+calendar can draw every layer from one request, and `POST /api/v1/bookings`
+accepts an optional `holdId` and returns `alternatives` alongside a `409`. Both
+changes are backwards compatible.
+
+Full write-up, including the ranking rules and the design decisions behind them:
+[`docs/epic-03-04-holds-and-recommendations.md`](docs/epic-03-04-holds-and-recommendations.md).
+Verification checklist: [`docs/EPIC-03-04-ACCEPTANCE.md`](docs/EPIC-03-04-ACCEPTANCE.md).

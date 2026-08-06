@@ -19,7 +19,10 @@
     { "key": "galleryId", "value": "" },
     { "key": "tournamentId", "value": "" },
     { "key": "matchId", "value": "" },
-    { "key": "cronSecret", "value": "" }
+    { "key": "cronSecret", "value": "" },
+    { "key": "holdId", "value": "" },
+    { "key": "holdStartAt", "value": "2027-05-10T10:00:00.000Z" },
+    { "key": "holdEndAt", "value": "2027-05-10T11:00:00.000Z" }
   ],
   "event": [
     {
@@ -218,6 +221,48 @@
         },
         { "name": "Update Live Score", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "scorekeeper" }, { "key": "x-user-id", "value": "scorekeeper-1" }, { "key": "x-user-email", "value": "scorekeeper-1@example.edu" }], "body": { "mode": "raw", "raw": "{ \"status\": \"live\", \"homeScore\": { \"goals\": 1 }, \"awayScore\": { \"goals\": 0 } }" }, "url": "{{baseUrl}}/api/v1/matches/{{matchId}}" } },
         { "name": "List Matches", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/matches?tournamentId={{tournamentId}}" } }
+      ]
+    },
+    {
+      "name": "12 - Slot Holds and Recommendations (EPIC-03/04)",
+      "description": "Run these top to bottom. 'Create Venue' in folder 03 must have run first so venueId is set. The 5-minute hold makes the ordering matter: hold the slot, watch it block a second person, then either book it or release it.",
+      "item": [
+        {
+          "name": "Hold a Slot (5 minutes)",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-1" }, { "key": "x-user-email", "value": "requester-1@example.edu" }], "body": { "mode": "raw", "raw": "{\n  \"resourceType\": \"venue\",\n  \"resourceId\": \"{{venueId}}\",\n  \"startAt\": \"{{holdStartAt}}\",\n  \"endAt\": \"{{holdEndAt}}\"\n}" }, "url": "{{baseUrl}}/api/v1/holds" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('holdId', pm.response.json().data.id);", "pm.test('hold lasts five minutes', function () {", "  var data = pm.response.json().data;", "  var minutes = (new Date(data.expiresAt) - new Date()) / 60000;", "  pm.expect(minutes).to.be.above(4.5);", "});"] } }]
+        },
+        {
+          "name": "My Live Holds",
+          "request": { "method": "GET", "header": [{ "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-1" }, { "key": "x-user-email", "value": "requester-1@example.edu" }], "url": "{{baseUrl}}/api/v1/holds/mine" }
+        },
+        {
+          "name": "Public Holds (anonymised)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/holds?resourceType=venue&resourceId={{venueId}}" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('does not leak who is holding the slot', function () {", "  pm.response.json().data.forEach(function (hold) { pm.expect(hold).to.not.have.property('heldBy'); });", "});"] } }]
+        },
+        {
+          "name": "Someone Else Is Blocked (expect 409)",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-2" }, { "key": "x-user-email", "value": "requester-2@example.edu" }], "body": { "mode": "raw", "raw": "{\n  \"resourceType\": \"venue\",\n  \"resourceId\": \"{{venueId}}\",\n  \"title\": \"Trying to take a held slot\",\n  \"startAt\": \"{{holdStartAt}}\",\n  \"endAt\": \"{{holdEndAt}}\"\n}" }, "url": "{{baseUrl}}/api/v1/bookings" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('blocked by the hold, and told so', function () {", "  pm.response.to.have.status(409);", "  pm.expect(pm.response.json().error.details.conflict.conflictType).to.eql('hold');", "});", "pm.test('offers alternatives in the same response', function () {", "  pm.expect(pm.response.json().error.details.alternatives).to.be.an('array');", "});"] } }]
+        },
+        {
+          "name": "Alternative Slots (US-05B)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/recommendations?resourceType=venue&resourceId={{venueId}}&startAt={{holdStartAt}}&endAt={{holdEndAt}}&limit=3" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('at most three suggestions, each explained', function () {", "  var body = pm.response.json();", "  pm.expect(body.data.length).to.be.at.most(3);", "  pm.expect(body.meta.reason).to.be.a('string');", "  body.data.forEach(function (slot) { pm.expect(slot.reasons).to.be.an('array'); });", "});"] } }]
+        },
+        {
+          "name": "Availability With Blackout and Hold Layers",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/public/availability?resourceType=venue&resourceId={{venueId}}&from=2027-05-01T00:00:00.000Z&to=2027-05-31T00:00:00.000Z" }
+        },
+        {
+          "name": "Book Using My Own Hold",
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-1" }, { "key": "x-user-email", "value": "requester-1@example.edu" }], "body": { "mode": "raw", "raw": "{\n  \"resourceType\": \"venue\",\n  \"resourceId\": \"{{venueId}}\",\n  \"title\": \"Confirmed from a held slot\",\n  \"holdId\": \"{{holdId}}\",\n  \"startAt\": \"{{holdStartAt}}\",\n  \"endAt\": \"{{holdEndAt}}\"\n}" }, "url": "{{baseUrl}}/api/v1/bookings" }
+        },
+        {
+          "name": "Release a Hold Early",
+          "request": { "method": "DELETE", "header": [{ "key": "x-user-role", "value": "requester" }, { "key": "x-user-id", "value": "requester-1" }, { "key": "x-user-email", "value": "requester-1@example.edu" }], "url": "{{baseUrl}}/api/v1/holds/{{holdId}}" }
+        }
       ]
     },
     {
