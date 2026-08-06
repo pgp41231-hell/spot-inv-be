@@ -1,6 +1,7 @@
 import pg from "pg";
-import { conflict, notFound } from "../errors.js";
+import { conflict, forbidden, notFound } from "../errors.js";
 import { postgresConnectionConfig } from "../database-config.js";
+import { HOLD_TTL_MINUTES } from "../holds.js";
 
 const { Pool } = pg;
 
@@ -163,34 +164,111 @@ export class PostgresStore {
     return record;
   }
 
-  async hasConflict({ resourceType, resourceId, startAt, endAt, excludeBookingId, quantity = 1 }) {
+  // `ignoreHoldsBy` lets a requester's own hold pass through: a hold must block
+  // everyone else and never the person who took it.
+  async hasConflict({ resourceType, resourceId, startAt, endAt, excludeBookingId, quantity = 1, ignoreHoldsBy, excludeHoldId }) {
     const result = await this.sql.query(
-      `SELECT 'booking' AS conflict_type,id,start_at,end_at,status
+      `SELECT 'booking' AS conflict_type,id,start_at,end_at,status,NULL::timestamptz AS expires_at
        FROM bookings WHERE $1='venue' AND resource_type=$1 AND resource_id=$2
        AND id <> COALESCE($5::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
        AND status NOT IN ('cancelled','rejected') AND start_at < $4 AND end_at > $3
        UNION ALL
-       SELECT 'blackout' AS conflict_type,id,start_at,end_at,'blocked' AS status
+       SELECT 'blackout' AS conflict_type,id,start_at,end_at,'blocked' AS status,NULL::timestamptz AS expires_at
        FROM blackouts WHERE resource_type=$1 AND (resource_id IS NULL OR resource_id=$2)
-       AND start_at < $4 AND end_at > $3 LIMIT 1`,
-      [resourceType, resourceId, startAt, endAt, excludeBookingId || null],
+       AND start_at < $4 AND end_at > $3
+       UNION ALL
+       SELECT 'hold' AS conflict_type,id,start_at,end_at,'held' AS status,expires_at
+       FROM slot_holds WHERE $1='venue' AND resource_type=$1 AND resource_id=$2
+       AND id <> COALESCE($7::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
+       AND held_by IS DISTINCT FROM $6 AND released_at IS NULL AND expires_at > now()
+       AND start_at < $4 AND end_at > $3
+       LIMIT 1`,
+      [resourceType, resourceId, startAt, endAt, excludeBookingId || null, ignoreHoldsBy || null, excludeHoldId || null],
     );
     if (result[0]) return camel(result[0]);
     if (resourceType === "equipment") {
       const stock = await this.sql.query("SELECT quantity FROM equipment_items WHERE id=$1 AND active", [resourceId]);
       if (!stock[0]) throw notFound("Equipment item");
+      // Live holds reserve stock exactly like bookings do, otherwise two people
+      // could each hold the last racquet and both reach the confirm step.
       const used = await this.sql.query(
-        `SELECT COALESCE(sum(quantity),0)::int AS used FROM bookings
-         WHERE resource_type='equipment' AND resource_id=$1
-         AND id <> COALESCE($4::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
-         AND status NOT IN ('cancelled','rejected') AND start_at < $3 AND end_at > $2`,
-        [resourceId, startAt, endAt, excludeBookingId || null],
+        `SELECT (
+           COALESCE((SELECT sum(quantity) FROM bookings
+             WHERE resource_type='equipment' AND resource_id=$1
+             AND id <> COALESCE($4::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
+             AND status NOT IN ('cancelled','rejected') AND start_at < $3 AND end_at > $2),0)
+           + COALESCE((SELECT sum(quantity) FROM slot_holds
+             WHERE resource_type='equipment' AND resource_id=$1
+             AND id <> COALESCE($6::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
+             AND held_by IS DISTINCT FROM $5 AND released_at IS NULL AND expires_at > now()
+             AND start_at < $3 AND end_at > $2),0)
+         )::int AS used`,
+        [resourceId, startAt, endAt, excludeBookingId || null, ignoreHoldsBy || null, excludeHoldId || null],
       );
       if (Number(used[0].used) + Number(quantity) > Number(stock[0].quantity)) {
         return { conflictType: "insufficient_stock", available: Number(stock[0].quantity) - Number(used[0].used) };
       }
     }
     return null;
+  }
+
+  // --- EPIC-03 / US-04B: temporary slot holds ---------------------------------
+
+  async createHold(data, actor) {
+    const existing = await this.hasConflict({ ...data, ignoreHoldsBy: actor.id });
+    if (existing) throw conflict("That slot is no longer available to hold", { conflict: existing });
+    const result = await this.sql.query(
+      `INSERT INTO slot_holds(resource_type,resource_id,held_by,quantity,start_at,end_at,expires_at)
+       VALUES($1,$2,$3,$4,$5,$6, now() + ($7 || ' minutes')::interval) RETURNING *`,
+      [data.resourceType, data.resourceId, actor.id, Number(data.quantity || 1),
+        data.startAt, data.endAt, String(HOLD_TTL_MINUTES)],
+    );
+    return camel(result[0]);
+  }
+
+  async getHold(id) {
+    const result = await this.sql.query("SELECT * FROM slot_holds WHERE id=$1", [id]);
+    if (!result[0]) throw notFound("Hold");
+    return camel(result[0]);
+  }
+
+  async releaseHold(id, actor) {
+    const hold = await this.getHold(id);
+    if (hold.heldBy !== actor.id && actor.role !== "admin") {
+      throw forbidden("Only the person holding this slot can release it");
+    }
+    const result = await this.sql.query(
+      "UPDATE slot_holds SET released_at=COALESCE(released_at,now()) WHERE id=$1 RETURNING *", [id],
+    );
+    return camel(result[0]);
+  }
+
+  async listActiveHolds({ resourceType, resourceId, from, to } = {}) {
+    return rows(await this.sql.query(
+      `SELECT * FROM slot_holds
+       WHERE released_at IS NULL AND expires_at > now()
+       AND ($1::text IS NULL OR resource_type=$1)
+       AND ($2::uuid IS NULL OR resource_id=$2)
+       AND ($3::timestamptz IS NULL OR end_at > $3)
+       AND ($4::timestamptz IS NULL OR start_at < $4)
+       ORDER BY start_at`,
+      [resourceType || null, resourceId || null, from || null, to || null],
+    ));
+  }
+
+  async listHoldsForUser(userId) {
+    return rows(await this.sql.query(
+      `SELECT * FROM slot_holds WHERE held_by=$1 AND released_at IS NULL AND expires_at > now()
+       ORDER BY start_at`, [userId],
+    ));
+  }
+
+  async consumeHold(holdId, bookingId) {
+    const result = await this.sql.query(
+      "UPDATE slot_holds SET booking_id=$2,released_at=now() WHERE id=$1 RETURNING *", [holdId, bookingId],
+    );
+    if (!result[0]) throw notFound("Hold");
+    return camel(result[0]);
   }
 
   async listBookings(filters = {}) {
@@ -212,7 +290,7 @@ export class PostgresStore {
   }
 
   async createBooking(data, actor) {
-    const existing = await this.hasConflict(data);
+    const existing = await this.hasConflict({ ...data, ignoreHoldsBy: actor.id });
     if (existing) throw conflict("The resource is unavailable for that time", { conflict: existing });
     const steps = await this.resolveApprovalSteps(data.resourceType, data.resourceId);
     try {
@@ -237,7 +315,7 @@ export class PostgresStore {
   async updateBooking(id, data, actor) {
     const before = await this.getBooking(id);
     const next = { ...before, ...data };
-    const existing = await this.hasConflict({ ...next, excludeBookingId: id });
+    const existing = await this.hasConflict({ ...next, excludeBookingId: id, ignoreHoldsBy: actor.id });
     if (existing) throw conflict("The resource is unavailable for that time", { conflict: existing });
     const result = await this.sql.query(
       `UPDATE bookings SET title=$2,purpose=$3,quantity=$4,start_at=$5,end_at=$6,metadata=$7::jsonb,updated_at=now()

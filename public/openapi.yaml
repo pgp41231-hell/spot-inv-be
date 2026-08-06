@@ -43,14 +43,91 @@ paths:
     get:
       tags: [Public]
       security: []
-      summary: Privacy-safe occupied slots
+      summary: Privacy-safe occupied slots, blackouts, and live holds
+      description: >-
+        `data` lists occupied bookings and is unchanged. `blackouts` and `holds`
+        are additive, and exist so the booking calendar can grey out slots a
+        student would otherwise only learn about after trying to book.
+        Holds are anonymised: they never carry `heldBy`.
       parameters:
         - { in: query, name: resourceType, required: true, schema: { $ref: '#/components/schemas/ResourceType' } }
         - { in: query, name: resourceId, schema: { type: string, format: uuid } }
         - { in: query, name: from, required: true, schema: { type: string, format: date-time } }
         - { in: query, name: to, required: true, schema: { type: string, format: date-time } }
       responses:
-        '200': { $ref: '#/components/responses/ListResponse' }
+        '200':
+          description: Occupied slots, plus the blackout and hold layers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PublicBooking' } }
+                  blackouts: { type: array, items: { $ref: '#/components/schemas/PublicBlackout' } }
+                  holds: { type: array, items: { $ref: '#/components/schemas/PublicHold' } }
+  /public/holds:
+    get:
+      tags: [Public, Bookings]
+      security: []
+      summary: Live slot holds, anonymised (US-04B)
+      description: >-
+        Slots another person is currently holding. Deliberately omits `heldBy`,
+        so the calendar can show that a slot is spoken for without revealing who
+        is taking it.
+      parameters:
+        - { in: query, name: resourceType, required: true, schema: { $ref: '#/components/schemas/ResourceType' } }
+        - { in: query, name: resourceId, schema: { type: string, format: uuid } }
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Active holds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PublicHold' } }
+                  meta:
+                    type: object
+                    properties:
+                      ttlMinutes: { type: integer, example: 5 }
+        '400': { $ref: '#/components/responses/ErrorResponse' }
+  /public/recommendations:
+    get:
+      tags: [Public, Bookings]
+      security: []
+      summary: Alternative slots when a time is unavailable (US-05B)
+      description: >-
+        A transparent rule-based heuristic, not a model. Peak windows are
+        06:00-09:00 and 17:00-21:00 IST; a peak-blocked request is answered with
+        off-peak slots first. Suggestions keep the requested duration exactly,
+        rank same-day first, and never overlap a booking, blackout, or live hold.
+        An empty `data` array is a valid answer, not an error - clients should
+        render the explanation in `meta.reason` (US-05D).
+      parameters:
+        - { in: query, name: resourceType, required: true, schema: { $ref: '#/components/schemas/ResourceType' } }
+        - { in: query, name: resourceId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: startAt, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: endAt, required: true, schema: { type: string, format: date-time } }
+        - { in: query, name: limit, schema: { type: integer, default: 3, maximum: 10 } }
+        - { in: query, name: windowDays, schema: { type: integer, default: 7, maximum: 30 } }
+      responses:
+        '200':
+          description: Ranked alternatives, best first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/SlotSuggestion' } }
+                  meta:
+                    type: object
+                    properties:
+                      requestedPeak: { type: boolean }
+                      windowDays: { type: integer }
+                      reason: { type: string }
+        '400': { $ref: '#/components/responses/ErrorResponse' }
   /public/{contentType}:
     get:
       tags: [Public]
@@ -170,6 +247,53 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '200': { $ref: '#/components/responses/ItemResponse' }
+  /holds:
+    post:
+      tags: [Bookings]
+      summary: Hold a slot for five minutes while booking (US-04B)
+      description: >-
+        An advisory, short-lived claim taken when a student picks a slot on the
+        calendar, so nobody else takes it while they fill in the form. A hold is
+        never a booking; the booking, and the database exclusion constraint
+        behind it, remain the source of truth. Holds expire passively - there is
+        no sweeper job, so a lapsed hold stops blocking the moment it lapses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HoldInput' }
+      responses:
+        '201':
+          description: The hold, and the TTL the UI should count down from
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Hold' }
+                  meta:
+                    type: object
+                    properties:
+                      ttlMinutes: { type: integer, example: 5 }
+        '409':
+          description: Someone else booked, blacked out, or is already holding that slot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /holds/mine:
+    get:
+      tags: [Bookings]
+      summary: My live holds, for recovering after a page refresh (US-04B)
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+  /holds/{id}:
+    delete:
+      tags: [Bookings]
+      summary: Release a hold early (owner or admin)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+        '403': { $ref: '#/components/responses/ErrorResponse' }
   /approvals/pending:
     get:
       tags: [Approvals]
@@ -331,6 +455,76 @@ components:
         startAt: { type: string, format: date-time }
         endAt: { type: string, format: date-time }
         metadata: { type: object, additionalProperties: true }
+        holdId:
+          type: string
+          format: uuid
+          description: >-
+            Optional (US-04B). The hold being converted into this booking. Must
+            belong to the caller, still be live, and cover this exact slot.
+            Omitting it books normally, so clients without slot-lock support are
+            unaffected.
+    HoldInput:
+      type: object
+      required: [resourceType, resourceId, startAt, endAt]
+      properties:
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string, format: uuid }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        quantity: { type: integer, minimum: 1, default: 1 }
+    Hold:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string, format: uuid }
+        heldBy: { type: string }
+        quantity: { type: integer }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        releasedAt: { type: [string, 'null'], format: date-time }
+        bookingId: { type: [string, 'null'], format: uuid }
+    PublicHold:
+      type: object
+      description: A hold as seen by everyone else - no `heldBy`.
+      properties:
+        id: { type: string, format: uuid }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string, format: uuid }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    PublicBooking:
+      type: object
+      description: An occupied slot - no requester, title, purpose, or metadata.
+      properties:
+        id: { type: string, format: uuid }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: string, format: uuid }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        status: { type: string }
+    PublicBlackout:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        resourceType: { $ref: '#/components/schemas/ResourceType' }
+        resourceId: { type: [string, 'null'], format: uuid }
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        reason: { type: string }
+    SlotSuggestion:
+      type: object
+      properties:
+        startAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time }
+        score: { type: number, description: Higher is better. Ranking only - not meaningful on its own. }
+        peak: { type: boolean }
+        reasons:
+          type: array
+          items: { type: string }
+          description: Plain-English justifications, e.g. "Same day", "Off-peak - quieter and usually approved faster".
     Error:
       type: object
       properties:
