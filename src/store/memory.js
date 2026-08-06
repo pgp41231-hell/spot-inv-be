@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { conflict, notFound } from "../errors.js";
+import { conflict, forbidden, notFound } from "../errors.js";
+import { holdExpiryFrom, isHoldActive } from "../holds.js";
 
 const now = () => new Date().toISOString();
 const clone = (value) => structuredClone(value);
@@ -11,6 +12,7 @@ export class MemoryStore {
     this.equipment = new Map();
     this.bookings = new Map();
     this.blackouts = new Map();
+    this.holds = new Map();
     this.approvalFlows = new Map();
     this.decisions = new Map();
     this.committee = new Map();
@@ -120,7 +122,18 @@ export class MemoryStore {
     return clone(record);
   }
 
-  async hasConflict({ resourceType, resourceId, startAt, endAt, excludeBookingId, quantity = 1 }) {
+  async hasConflict(args) {
+    return this.conflictFor(args);
+  }
+
+  // Deliberately synchronous. Callers that commit (createBooking, createHold) run
+  // this and their write in one uninterrupted block, so two simultaneous requests
+  // cannot both pass the check before either writes. Postgres gets the same
+  // guarantee from the `no_overlapping_venue_booking` exclusion constraint.
+  //
+  // `ignoreHoldsBy` lets a requester's own hold pass through: a hold must block
+  // everyone else and never the person who took it.
+  conflictFor({ resourceType, resourceId, startAt, endAt, excludeBookingId, quantity = 1, ignoreHoldsBy, excludeHoldId }) {
     const overlap = (item) => item.startAt < endAt && item.endAt > startAt;
     const overlappingBookings = [...this.bookings.values()].filter((item) =>
       item.id !== excludeBookingId &&
@@ -129,20 +142,97 @@ export class MemoryStore {
       !["cancelled", "rejected"].includes(item.status) &&
       overlap(item),
     );
+    const overlappingHolds = [...this.holds.values()].filter((item) =>
+      item.id !== excludeHoldId &&
+      item.resourceType === resourceType &&
+      item.resourceId === resourceId &&
+      item.heldBy !== ignoreHoldsBy &&
+      isHoldActive(item) &&
+      overlap(item),
+    );
     const blackout = [...this.blackouts.values()].find((item) =>
       item.resourceType === resourceType &&
       (item.resourceId === null || item.resourceId === resourceId) &&
       overlap(item),
     );
-    if (blackout) return clone(blackout);
-    if (resourceType === "venue") return clone(overlappingBookings[0] || null);
+    if (blackout) return { ...clone(blackout), conflictType: "blackout" };
+    if (resourceType === "venue") {
+      if (overlappingBookings[0]) return { ...clone(overlappingBookings[0]), conflictType: "booking" };
+      if (overlappingHolds[0]) {
+        return { conflictType: "hold", startAt: overlappingHolds[0].startAt, endAt: overlappingHolds[0].endAt, expiresAt: overlappingHolds[0].expiresAt };
+      }
+      return null;
+    }
     const item = this.equipment.get(resourceId);
     if (!item) throw notFound("Equipment item");
-    const used = overlappingBookings.reduce((sum, booking) => sum + Number(booking.quantity || 1), 0);
+    const sumQuantity = (total, entry) => total + Number(entry.quantity || 1);
+    const used = overlappingBookings.reduce(sumQuantity, 0) + overlappingHolds.reduce(sumQuantity, 0);
     if (used + Number(quantity) > Number(item.quantity)) {
       return { conflictType: "insufficient_stock", available: Math.max(0, Number(item.quantity) - used) };
     }
     return null;
+  }
+
+  // --- EPIC-03 / US-04B: temporary slot holds ---------------------------------
+
+  async createHold(data, actor) {
+    const existing = this.conflictFor({ ...data, ignoreHoldsBy: actor.id });
+    if (existing) throw conflict("That slot is no longer available to hold", { conflict: existing });
+    const record = {
+      id: randomUUID(),
+      resourceType: data.resourceType,
+      resourceId: data.resourceId,
+      startAt: data.startAt,
+      endAt: data.endAt,
+      quantity: Number(data.quantity || 1),
+      heldBy: actor.id,
+      expiresAt: holdExpiryFrom(),
+      releasedAt: null,
+      bookingId: null,
+      createdAt: now(),
+    };
+    this.holds.set(record.id, record);
+    return clone(record);
+  }
+
+  async getHold(id) {
+    const hold = this.holds.get(id);
+    if (!hold) throw notFound("Hold");
+    return clone(hold);
+  }
+
+  async releaseHold(id, actor) {
+    const hold = this.holds.get(id);
+    if (!hold) throw notFound("Hold");
+    if (hold.heldBy !== actor.id && actor.role !== "admin") {
+      throw forbidden("Only the person holding this slot can release it");
+    }
+    hold.releasedAt = hold.releasedAt || now();
+    return clone(hold);
+  }
+
+  async listActiveHolds({ resourceType, resourceId, from, to } = {}) {
+    return clone([...this.holds.values()].filter((item) =>
+      isHoldActive(item) &&
+      (!resourceType || item.resourceType === resourceType) &&
+      (!resourceId || item.resourceId === resourceId) &&
+      (!from || item.endAt > from) &&
+      (!to || item.startAt < to),
+    ).sort((a, b) => a.startAt.localeCompare(b.startAt)));
+  }
+
+  async listHoldsForUser(userId) {
+    return clone([...this.holds.values()]
+      .filter((item) => item.heldBy === userId && isHoldActive(item))
+      .sort((a, b) => a.startAt.localeCompare(b.startAt)));
+  }
+
+  async consumeHold(holdId, bookingId) {
+    const hold = this.holds.get(holdId);
+    if (!hold) throw notFound("Hold");
+    hold.bookingId = bookingId;
+    hold.releasedAt = now();
+    return clone(hold);
   }
 
   async listBookings(filters = {}) {
@@ -162,9 +252,11 @@ export class MemoryStore {
   }
 
   async createBooking(data, actor) {
-    const existing = await this.hasConflict(data);
-    if (existing) throw conflict("The resource is unavailable for that time", { conflict: existing });
+    // Resolve approvals first so that the conflict check and the write below are
+    // one synchronous, uninterruptible step (US-04C).
     const steps = await this.resolveApprovalSteps(data.resourceType, data.resourceId);
+    const existing = this.conflictFor({ ...data, ignoreHoldsBy: actor.id });
+    if (existing) throw conflict("The resource is unavailable for that time", { conflict: existing });
     const record = {
       id: randomUUID(),
       ...clone(data),
@@ -183,7 +275,7 @@ export class MemoryStore {
   async updateBooking(id, data, actor) {
     const before = await this.getBooking(id);
     const candidate = { ...before, ...clone(data), id, updatedAt: now() };
-    const existing = await this.hasConflict({ ...candidate, excludeBookingId: id });
+    const existing = this.conflictFor({ ...candidate, excludeBookingId: id, ignoreHoldsBy: actor.id });
     if (existing) throw conflict("The resource is unavailable for that time", { conflict: existing });
     this.bookings.set(id, candidate);
     await this.appendAudit(actor, "booking.updated", "booking", id, before, candidate);
