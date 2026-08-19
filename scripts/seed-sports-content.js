@@ -12,17 +12,27 @@
 // it creates goes through the same validation, role checks, and audit
 // logging a real admin's request would.
 //
-// Usage:
-//   BASE_URL=http://localhost:3000/api/v1 \
-//   ADMIN_EMAIL=sports@iiml.ac.in ADMIN_PASSWORD=sports@iiml.ac.in \
-//   FRONTEND_BASE_URL=http://localhost:5173 \
+// Usage (local dev — the defaults below already point at the local
+// AUTH_MODE=password/in-memory setup from the README, so this can run with
+// no env vars at all):
 //   node scripts/seed-sports-content.js
 //
-// All four env vars have local-dev defaults (see below) and can be omitted
-// when running against the local AUTH_MODE=password/in-memory setup from
-// the README. Set FRONTEND_BASE_URL to the real deployed frontend's origin
-// when seeding a real deployment, so the Sangram 2025 photo URLs resolve —
-// gallery.mediaUrl only stores a URL, it doesn't host the image itself.
+// Usage (a real deployment):
+//   BASE_URL=https://spot-inv-be.vercel.app/api/v1 \
+//   ADMIN_EMAIL=<real admin email> ADMIN_PASSWORD=<real admin password> \
+//   node scripts/seed-sports-content.js
+//
+// BASE_URL and the admin credentials deliberately default to the local
+// setup, not a real deployment — the whole point is that seeding a real,
+// live database is something you opt into explicitly by passing BASE_URL,
+// never something that happens by omission. FRONTEND_BASE_URL is the one
+// exception: it defaults to the real deployed frontend
+// (https://sport-inv-fe.vercel.app) since that's genuinely the right value
+// almost always — gallery.mediaUrl only stores a URL, it doesn't host the
+// image itself, so the Sangram 2025 photos need to point at wherever the
+// files actually are (see public/tournaments/sangram-2025/ in sport-inv-fe).
+// Override it to http://localhost:5173 when seeding a local backend against
+// a local frontend dev server instead, so the two agree on where "here" is.
 //
 // Idempotent by inspection, not by an --force flag: each section checks
 // what already exists (by email for committee, by name for tournaments) and
@@ -35,7 +45,7 @@
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000/api/v1";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "sports@iiml.ac.in";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "sports@iiml.ac.in";
-const FRONTEND_BASE_URL = (process.env.FRONTEND_BASE_URL || "http://localhost:5173").replace(/\/$/, "");
+const FRONTEND_BASE_URL = (process.env.FRONTEND_BASE_URL || "https://sport-inv-fe.vercel.app").replace(/\/$/, "");
 
 async function request(path, { method = "GET", token, body } = {}) {
   const response = await fetch(`${BASE_URL}${path}`, {
