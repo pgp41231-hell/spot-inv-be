@@ -22,19 +22,23 @@ const snake = (value) => value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerC
 const CONTENT = {
   committee: {
     table: "committee_members",
-    columns: ["name", "title", "email", "phone", "responsibilities", "display_order"],
+    columns: ["name", "title", "email", "phone", "responsibilities", "tags", "display_order"],
   },
   gallery: {
     table: "gallery_items",
-    columns: ["title", "event_name", "occurred_on", "media_url", "thumbnail_url", "caption"],
+    columns: ["title", "event_name", "occurred_on", "media_url", "thumbnail_url", "caption", "tournament_id"],
   },
   tournaments: {
     table: "tournaments",
-    columns: ["name", "description", "starts_on", "ends_on", "status"],
+    columns: ["name", "description", "starts_on", "ends_on", "status", "blurb", "venue"],
   },
   matches: {
     table: "matches",
-    columns: ["tournament_id", "sport", "home_team", "away_team", "venue_id", "starts_at", "status", "home_score", "away_score", "notes"],
+    columns: ["tournament_id", "sport", "home_team", "away_team", "venue_id", "starts_at", "status", "home_score", "away_score", "notes", "venue", "stage"],
+  },
+  standings: {
+    table: "standings",
+    columns: ["tournament_id", "section", "sport", "points"],
   },
 };
 
@@ -567,8 +571,17 @@ export class PostgresStore {
     const meta = CONTENT[type];
     const values = [];
     let where = "";
-    if (type === "matches" && filters.tournamentId) { values.push(filters.tournamentId); where = "WHERE tournament_id=$1"; }
-    const order = type === "committee" ? "display_order,name" : type === "matches" ? "starts_at" : "created_at DESC";
+    // Any content type with a tournament_id column (matches, gallery,
+    // standings) can be scoped to one tournament this way — not just
+    // matches, which was the only one that had the column before.
+    if (meta.columns.includes("tournament_id") && filters.tournamentId) {
+      values.push(filters.tournamentId);
+      where = "WHERE tournament_id=$1";
+    }
+    const order = type === "committee" ? "display_order,name"
+      : type === "matches" ? "starts_at"
+      : type === "standings" ? "section,sport"
+      : "created_at DESC";
     return rows(await this.sql.query(`SELECT * FROM ${meta.table} ${where} ORDER BY ${order}`, values));
   }
 
@@ -611,6 +624,13 @@ export class PostgresStore {
     const after = camel(result[0]);
     await this.appendAudit(actor, `${type}.updated`, type, id, before, after);
     return after;
+  }
+
+  async deleteContent(type, id, actor) {
+    const meta = CONTENT[type];
+    const before = await this.getContent(type, id);
+    await this.sql.query(`DELETE FROM ${meta.table} WHERE id=$1`, [id]);
+    await this.appendAudit(actor, `${type}.deleted`, type, id, before, null);
   }
 
   async createEquipmentAssets(equipmentId, assets, actor) {
