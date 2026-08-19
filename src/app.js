@@ -163,6 +163,11 @@ const contentSchemas = {
     venueId: id.optional().nullable(), startsAt: iso, status: z.enum(["scheduled", "live", "completed", "cancelled"]).default("scheduled"),
     homeScore: z.record(z.string(), z.unknown()).default({}), awayScore: z.record(z.string(), z.unknown()).default({}),
     notes: z.string().optional().nullable(),
+    // Plain-text venue label, independent of venueId (a real venues-table
+    // link) -- lets a fixture show a ground/court name even when it isn't
+    // matched to a bookable venue record. stage is the round/bracket label,
+    // e.g. "Men's Singles - Semifinal", kept separate from notes.
+    venue: z.string().optional().nullable(), stage: z.string().optional().nullable(),
   }),
   // Section-wise standings for a tournament (e.g. Sangram's Section A-I
   // points table) — one row per section/sport pair, unique per tournament.

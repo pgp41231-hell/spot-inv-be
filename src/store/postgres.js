@@ -34,7 +34,7 @@ const CONTENT = {
   },
   matches: {
     table: "matches",
-    columns: ["tournament_id", "sport", "home_team", "away_team", "venue_id", "starts_at", "status", "home_score", "away_score", "notes"],
+    columns: ["tournament_id", "sport", "home_team", "away_team", "venue_id", "starts_at", "status", "home_score", "away_score", "notes", "venue", "stage"],
   },
   standings: {
     table: "standings",
