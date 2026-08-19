@@ -47,7 +47,7 @@ export function loadConfig(env = process.env) {
       supabaseUrl: String(env.SUPABASE_URL || "").replace(/\/$/, ""),
       supabaseAnonKey: env.SUPABASE_ANON_KEY || "",
       supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY || "",
-      adminSeedPassword: env.ADMIN_SEED_PASSWORD || "sportscomm@iiml.ac.in",
+      adminSeedPassword: env.ADMIN_SEED_PASSWORD || "sports@iiml.ac.in",
     },
     cronSecret: env.CRON_SECRET || "",
     email: {

@@ -45,7 +45,7 @@ test("the fixed Sports Committee email still receives the admin role", async () 
   };
   const user = await postgres.ensureUser({
     id: "real-admin",
-    email: "sportscomm@iiml.ac.in",
+    email: "sports@iiml.ac.in",
     name: "Sports Committee",
     role: "requester",
   });

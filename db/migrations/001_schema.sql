@@ -20,8 +20,22 @@ CREATE TABLE IF NOT EXISTS app_users (
   must_change_password boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT admin_email_is_fixed CHECK (role <> 'admin' OR lower(email)='sportscomm@iiml.ac.in')
+  CONSTRAINT admin_email_is_fixed CHECK (role <> 'admin' OR lower(email)='sports@iiml.ac.in')
 );
+
+-- This baseline is intentionally rerun on deploy. Correct installations that
+-- were previously created with sportscomm@iiml.ac.in as the fixed admin.
+ALTER TABLE app_users DROP CONSTRAINT IF EXISTS admin_email_is_fixed;
+UPDATE app_users
+SET role='requester',must_change_password=false,updated_at=now()
+WHERE lower(email)='sportscomm@iiml.ac.in';
+UPDATE app_users
+SET must_change_password=CASE WHEN role<>'admin' THEN true ELSE must_change_password END,
+    role='admin',updated_at=now()
+WHERE lower(email)='sports@iiml.ac.in';
+ALTER TABLE app_users ADD CONSTRAINT admin_email_is_fixed
+CHECK (role <> 'admin' OR lower(email)='sports@iiml.ac.in');
+
 CREATE UNIQUE INDEX IF NOT EXISTS app_users_email_unique ON app_users(lower(email));
 
 CREATE TABLE IF NOT EXISTS role_assignments (
@@ -434,7 +448,7 @@ CREATE OR REPLACE FUNCTION private.is_admin()
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=''
 AS $$ SELECT EXISTS(
   SELECT 1 FROM public.app_users
-  WHERE id=(SELECT auth.uid())::text AND role='admin' AND lower(email)='sportscomm@iiml.ac.in'
+  WHERE id=(SELECT auth.uid())::text AND role='admin' AND lower(email)='sports@iiml.ac.in'
 ) $$;
 
 CREATE OR REPLACE FUNCTION private.owns_equipment_request(target_request uuid)
@@ -455,14 +469,14 @@ BEGIN
     NEW.id::text,
     lower(NEW.email),
     COALESCE(NULLIF(NEW.raw_user_meta_data->>'name',''),split_part(NEW.email,'@',1)),
-    CASE WHEN lower(NEW.email)='sportscomm@iiml.ac.in' THEN 'admin' ELSE COALESCE(assigned_role,'requester') END,
-    lower(NEW.email)='sportscomm@iiml.ac.in'
+    CASE WHEN lower(NEW.email)='sports@iiml.ac.in' THEN 'admin' ELSE COALESCE(assigned_role,'requester') END,
+    lower(NEW.email)='sports@iiml.ac.in'
   )
   ON CONFLICT(id) DO UPDATE SET
     email=EXCLUDED.email,
     name=EXCLUDED.name,
     role=CASE
-      WHEN lower(EXCLUDED.email)='sportscomm@iiml.ac.in' THEN 'admin'
+      WHEN lower(EXCLUDED.email)='sports@iiml.ac.in' THEN 'admin'
       WHEN app_users.role='admin' THEN 'requester'
       ELSE app_users.role
     END,
@@ -475,7 +489,7 @@ RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
 AS $$
 DECLARE allowed_pattern text;
 BEGIN
-  IF lower(NEW.email) IN ('sportscomm@iiml.ac.in','inventory@iiml.ac.in') THEN RETURN NEW; END IF;
+  IF lower(NEW.email) IN ('sports@iiml.ac.in','inventory@iiml.ac.in') THEN RETURN NEW; END IF;
   SELECT email_pattern INTO allowed_pattern FROM public.auth_settings WHERE id=true;
   IF NEW.email IS NULL OR lower(NEW.email) !~* COALESCE(allowed_pattern,'^pgp\d{5}@iiml\.ac\.in$') THEN
     RAISE EXCEPTION 'Email is not eligible for this portal';
@@ -488,7 +502,7 @@ SELECT
   user_record.id::text,
   lower(user_record.email),
   COALESCE(NULLIF(user_record.raw_user_meta_data->>'name',''),split_part(user_record.email,'@',1)),
-  CASE WHEN lower(user_record.email)='sportscomm@iiml.ac.in' THEN 'admin' ELSE COALESCE(assignment.role,'requester') END,
+  CASE WHEN lower(user_record.email)='sports@iiml.ac.in' THEN 'admin' ELSE COALESCE(assignment.role,'requester') END,
   false
 FROM auth.users user_record
 LEFT JOIN role_assignments assignment ON assignment.email=lower(user_record.email)
@@ -497,7 +511,7 @@ ON CONFLICT(id) DO UPDATE SET
   email=EXCLUDED.email,
   name=EXCLUDED.name,
   role=CASE
-    WHEN lower(EXCLUDED.email)='sportscomm@iiml.ac.in' THEN 'admin'
+    WHEN lower(EXCLUDED.email)='sports@iiml.ac.in' THEN 'admin'
     WHEN app_users.role='admin' THEN 'requester'
     ELSE app_users.role
   END,

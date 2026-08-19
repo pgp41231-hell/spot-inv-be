@@ -4,7 +4,7 @@ import { badRequest, forbidden, unauthorized } from "./errors.js";
 
 const scrypt = promisify(scryptCallback);
 
-export const BOOTSTRAP_ADMIN_EMAIL = "sportscomm@iiml.ac.in";
+export const BOOTSTRAP_ADMIN_EMAIL = "sports@iiml.ac.in";
 export const INVENTORY_KIOSK_EMAIL = "inventory@iiml.ac.in";
 export const DEFAULT_EMAIL_PATTERN = String.raw`^pgp\d{5}@iiml\.ac\.in$`;
 export const SESSION_TTL_DAYS = 7;

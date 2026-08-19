@@ -189,7 +189,7 @@ export class PostgresStore {
   async setUserRole(id, role) {
     const user = await this.getUser(id);
     if (user.email === BOOTSTRAP_ADMIN_EMAIL) throw forbidden("The bootstrap administrator role cannot be changed");
-    if (role === "admin") throw forbidden("Only sportscomm@iiml.ac.in can be an administrator");
+    if (role === "admin") throw forbidden("Only sports@iiml.ac.in can be an administrator");
     const result = await this.sql.query(
       "UPDATE app_users SET role=$2,updated_at=now() WHERE id=$1 RETURNING *", [id, role],
     );

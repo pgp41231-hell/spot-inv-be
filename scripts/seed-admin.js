@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-const email = "sportscomm@iiml.ac.in";
+const email = "sports@iiml.ac.in";
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const password = process.env.ADMIN_SEED_PASSWORD || email;

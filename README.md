@@ -13,7 +13,7 @@ Requirements: Node.js 20+ and pnpm/npm.
 
 The equipment module requires PostgreSQL/Supabase and does not have an in-memory adapter. `AUTH_MODE=demo` and the in-memory store remain only for automated tests and the unchanged legacy modules; do not use them for a deployment.
 
-`pnpm auth:seed-admin` creates `sportscomm@iiml.ac.in` through the Supabase Auth admin API. It reads `ADMIN_SEED_PASSWORD`, using the administrator email only when the variable is unset, and never resets an existing account. The seeded profile must change its password on first login. This is the only email that can hold the admin role. Other eligible accounts are students (`requester`) by default; the administrator assigns SportComm members or scorekeepers by email.
+`pnpm auth:seed-admin` creates `sports@iiml.ac.in` through the Supabase Auth admin API. It reads `ADMIN_SEED_PASSWORD`, using the administrator email only when the variable is unset, and never resets an existing account. The seeded profile must change its password on first login. This is the only email that can hold the admin role. Other eligible accounts are students (`requester`) by default; the administrator assigns SportComm members or scorekeepers by email.
 
 The default eligible student rule is `^pgp\d{5}@iiml\.ac\.in$` (case-insensitive). The administrator can replace it in the dashboard; the rule is checked at signup and on every new login so yearly batch access can be rotated without deleting historical users.
 

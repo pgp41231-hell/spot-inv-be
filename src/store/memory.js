@@ -171,7 +171,7 @@ export class MemoryStore {
     const user = this.users.get(id);
     if (!user) throw notFound("User");
     if (user.email === BOOTSTRAP_ADMIN_EMAIL) throw forbidden("The bootstrap administrator role cannot be changed");
-    if (role === "admin") throw forbidden("Only sportscomm@iiml.ac.in can be an administrator");
+    if (role === "admin") throw forbidden("Only sports@iiml.ac.in can be an administrator");
     user.role = role;
     user.updatedAt = now();
     return clone(user);
