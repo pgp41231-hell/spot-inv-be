@@ -52,12 +52,12 @@ export function createAuthenticator(config, store) {
 
     // Temporary bootstrap mode for frontend development before institutional SSO is connected.
     // Never use this mode for a public production launch with real user data.
-    const role = String(req.headers["x-user-role"] || "admin");
+    const role = String(req.headers["x-user-role"] || "requester");
     if (!ROLES.includes(role)) throw new Error("Invalid demo role");
     return {
-      id: String(req.headers["x-user-id"] || "demo-admin"),
-      email: String(req.headers["x-user-email"] || "demo-admin@example.edu"),
-      name: String(req.headers["x-user-name"] || "Demo Admin"),
+      id: String(req.headers["x-user-id"] || "demo-user"),
+      email: String(req.headers["x-user-email"] || "demo-user@example.edu"),
+      name: String(req.headers["x-user-name"] || "Demo User"),
       role,
     };
   };

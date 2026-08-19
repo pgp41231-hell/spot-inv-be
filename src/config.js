@@ -15,7 +15,8 @@ export function loadConfig(env = process.env) {
     env.SUPABASE_DB_URL,
   ].find((value) => String(value || "").trim()) || "";
   const hasOidcSettings = Boolean(env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI);
-  const authMode = env.AUTH_MODE || (hasOidcSettings ? "oidc" : "demo");
+  const hasSupabaseSettings = Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
+  const authMode = env.AUTH_MODE || (hasSupabaseSettings ? "supabase" : hasOidcSettings ? "oidc" : "demo");
 
   if (!["demo", "password", "supabase", "oidc"].includes(authMode)) {
     throw new Error("AUTH_MODE must be demo, password, supabase, or oidc");
@@ -28,6 +29,9 @@ export function loadConfig(env = process.env) {
   }
   if ((env.VERCEL || env.REQUIRE_DATABASE === "true") && !databaseUrl) {
     throw new Error("Persistent database is required, but no Supabase/PostgreSQL connection URL is available");
+  }
+  if (env.VERCEL && ["demo", "password"].includes(authMode)) {
+    throw new Error("Vercel deployments require AUTH_MODE=supabase (or fully configured oidc); demo/password authentication is local-only");
   }
 
   return {

@@ -458,7 +458,15 @@ BEGIN
     CASE WHEN lower(NEW.email)='sportscomm@iiml.ac.in' THEN 'admin' ELSE COALESCE(assigned_role,'requester') END,
     lower(NEW.email)='sportscomm@iiml.ac.in'
   )
-  ON CONFLICT(id) DO UPDATE SET email=EXCLUDED.email,name=EXCLUDED.name,updated_at=now();
+  ON CONFLICT(id) DO UPDATE SET
+    email=EXCLUDED.email,
+    name=EXCLUDED.name,
+    role=CASE
+      WHEN lower(EXCLUDED.email)='sportscomm@iiml.ac.in' THEN 'admin'
+      WHEN app_users.role='admin' THEN 'requester'
+      ELSE app_users.role
+    END,
+    updated_at=now();
   RETURN NEW;
 END $$;
 
@@ -488,7 +496,11 @@ WHERE user_record.email IS NOT NULL
 ON CONFLICT(id) DO UPDATE SET
   email=EXCLUDED.email,
   name=EXCLUDED.name,
-  role=CASE WHEN lower(EXCLUDED.email)='sportscomm@iiml.ac.in' THEN 'admin' ELSE app_users.role END,
+  role=CASE
+    WHEN lower(EXCLUDED.email)='sportscomm@iiml.ac.in' THEN 'admin'
+    WHEN app_users.role='admin' THEN 'requester'
+    ELSE app_users.role
+  END,
   updated_at=now();
 
 DROP TRIGGER IF EXISTS sports_user_created ON auth.users;

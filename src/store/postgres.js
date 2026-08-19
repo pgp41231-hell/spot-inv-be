@@ -59,11 +59,20 @@ export class PostgresStore {
 
   async ensureUser(user) {
     const email = normalizeEmail(user.email);
-    const role = email === BOOTSTRAP_ADMIN_EMAIL ? "admin" : (user.role || "requester");
+    // Authentication input is identity data, not authorization. In particular,
+    // never let a stale/demo header create a second administrator account.
+    const requestedRole = user.role || "requester";
+    const role = email === BOOTSTRAP_ADMIN_EMAIL
+      ? "admin"
+      : requestedRole === "admin" ? "requester" : requestedRole;
     const result = await this.sql.query(
       `INSERT INTO app_users (id,email,name,role) VALUES ($1,$2,$3,$4)
        ON CONFLICT (id) DO UPDATE SET email=EXCLUDED.email,name=EXCLUDED.name,
-       role=CASE WHEN lower(EXCLUDED.email)=$5 THEN 'admin' ELSE app_users.role END,updated_at=now()
+       role=CASE
+         WHEN lower(EXCLUDED.email)=$5 THEN 'admin'
+         WHEN app_users.role='admin' THEN 'requester'
+         ELSE app_users.role
+       END,updated_at=now()
        RETURNING *`,
       [user.id, email, user.name, role, BOOTSTRAP_ADMIN_EMAIL],
     );
