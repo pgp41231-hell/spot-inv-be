@@ -138,21 +138,38 @@ const contentSchemas = {
   committee: z.object({
     name: z.string().min(2), title: z.string().min(2), email: z.string().email().optional().nullable(),
     phone: z.string().optional().nullable(), responsibilities: z.string().optional().nullable(),
+    // Every sport this member is involved in, e.g. ["Cricket", "Badminton"] —
+    // not just one. Rendered as one pill per tag on the frontend.
+    tags: z.array(z.string().min(1)).default([]),
     displayOrder: z.number().int().default(0),
   }),
   gallery: z.object({
     title: z.string().min(2), eventName: z.string().optional().nullable(), occurredOn: z.string().date().optional().nullable(),
     mediaUrl: z.string().url(), thumbnailUrl: z.string().url().optional().nullable(), caption: z.string().optional().nullable(),
+    // Which tournament this photo belongs to, if any — lets a tournament's
+    // detail page query its own photos directly instead of matching on
+    // eventName text.
+    tournamentId: id.optional().nullable(),
   }),
   tournaments: z.object({
     name: z.string().min(2), description: z.string().optional().nullable(), startsOn: z.string().date().optional().nullable(),
     endsOn: z.string().date().optional().nullable(), status: z.enum(["draft", "published", "live", "completed"]).default("draft"),
+    // blurb is the short one-liner a gallery card shows under the name;
+    // description is the longer paragraph on the tournament's own page.
+    blurb: z.string().optional().nullable(), venue: z.string().optional().nullable(),
   }),
   matches: z.object({
     tournamentId: id.optional().nullable(), sport: z.string().min(2), homeTeam: z.string().min(1), awayTeam: z.string().min(1),
     venueId: id.optional().nullable(), startsAt: iso, status: z.enum(["scheduled", "live", "completed", "cancelled"]).default("scheduled"),
     homeScore: z.record(z.string(), z.unknown()).default({}), awayScore: z.record(z.string(), z.unknown()).default({}),
     notes: z.string().optional().nullable(),
+  }),
+  // Section-wise standings for a tournament (e.g. Sangram's Section A-I
+  // points table) — one row per section/sport pair, unique per tournament.
+  // Same write access as matches: this is scorekeeper territory, same as
+  // updating a live score is.
+  standings: z.object({
+    tournamentId: id, section: z.string().min(1), sport: z.string().min(1), points: z.number().int().min(0).default(0),
   }),
 };
 
@@ -325,7 +342,7 @@ export function createApp(options = {}) {
       },
     });
   });
-  for (const type of ["committee", "gallery", "tournaments", "matches"]) {
+  for (const type of ["committee", "gallery", "tournaments", "matches", "standings"]) {
     app.get(`/api/v1/public/${type}`, async (req, res) => {
       const data = await store.listContent(type, { tournamentId: req.query.tournamentId });
       const publicData = type === "tournaments" ? data.filter((item) => item.status !== "draft") : data;
@@ -659,14 +676,20 @@ export function createApp(options = {}) {
     res.json({ data: await store.listAudit(Math.min(Number(req.query.limit || 100), 500)) });
   });
 
-  for (const type of ["committee", "gallery", "tournaments", "matches"]) {
-    const roles = type === "matches" ? ["scorekeeper", "admin"] : ["admin"];
+  for (const type of ["committee", "gallery", "tournaments", "matches", "standings"]) {
+    // Standings get the same write access as matches: editing a live score
+    // and editing that score's effect on the table are the same job.
+    const roles = ["matches", "standings"].includes(type) ? ["scorekeeper", "admin"] : ["admin"];
     app.get(`/api/v1/${type}`, async (req, res) => res.json({ data: await store.listContent(type, { tournamentId: req.query.tournamentId }) }));
     app.post(`/api/v1/${type}`, requireRoles(...roles), async (req, res) => {
       res.status(201).json({ data: await store.createContent(type, parse(contentSchemas[type], req.body), req.user) });
     });
     app.patch(`/api/v1/${type}/:id`, requireRoles(...roles), async (req, res) => {
       res.json({ data: await store.updateContent(type, req.params.id, parse(contentSchemas[type].partial(), req.body), req.user) });
+    });
+    app.delete(`/api/v1/${type}/:id`, requireRoles(...roles), async (req, res) => {
+      await store.deleteContent(type, req.params.id, req.user);
+      res.json({ data: { id: req.params.id } });
     });
   }
 

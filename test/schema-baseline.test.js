@@ -14,7 +14,7 @@ test("fresh deployments use one complete final-state schema baseline", async () 
     "venues", "bookings", "slot_holds", "teams", "team_members", "equipment_items",
     "equipment_assets", "equipment_allocations", "equipment_requests",
     "equipment_request_items", "equipment_custody", "equipment_qr_tokens",
-    "equipment_state_audit", "audit_log",
+    "equipment_state_audit", "audit_log", "standings",
   ];
 
   for (const table of requiredTables) {
