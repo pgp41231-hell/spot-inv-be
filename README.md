@@ -41,9 +41,7 @@ pnpm db:seed
 
 On Windows PowerShell, use `$env:DIRECT_DATABASE_URL="your Supabase direct connection URL"; pnpm db:migrate`. The health response reports `storage: "postgres"` when the deployed function receives the database configuration.
 
-Migration `005_supabase_equipment_custody.sql` adds sports, teams, POCs, requests, custody, one-use QR records, and custody audit entries. It also enables row-level security and installs the Supabase Auth profile trigger. QR records store only a hash; the opaque signed token is returned to the requester and expires after `QR_TOKEN_TTL_HOURS` (six hours by default).
-
-Migrations `006_equipment_catalog_and_photos.sql` and `007_equipment_catalog_seed.sql` add the shared campus-location and equipment-category catalogs, sport/category/location foreign keys, per-asset condition, the public `sports-media` Storage bucket, upload policies, and the idempotent starter inventory. Running `pnpm db:migrate` applies both; rerunning it does not duplicate catalog, equipment, or asset rows.
+The database is created from one final-state baseline: `db/migrations/001_schema.sql`. It creates the complete application schema, constraints, RLS policies, Supabase Auth profile triggers, the public `sports-media` bucket, and idempotent starter sports, venues, equipment, allocations, and asset tags. It contains no legacy upgrade steps and is intended for a fresh test schema. The migration runner wraps the file in a transaction, so a failure rolls back the entire baseline instead of leaving a half-created database.
 
 ## Test
 
@@ -56,8 +54,8 @@ The tests cover the unchanged API behaviour plus signed equipment-token validati
 ## Deploy to Vercel
 
 1. Push this directory to a Git provider or run `vercel` from the project root.
-2. Deploy with no environment variables for temporary demo mode, then verify `/api/v1/health` and `/openapi.yaml`.
-3. Before a real launch, add a PostgreSQL provider, configure `DATABASE_URL` and OIDC values, run the migration/seed, and set `AUTH_MODE=oidc`.
+2. Configure the Supabase and database environment variables before deploying; the build applies `001_schema.sql` automatically.
+3. Set `AUTH_MODE=supabase`, then verify `/api/v1/health` reports `storage: "postgres"` and open `/openapi.yaml`.
 
 Vercel routes all requests to the Express export in `api/index.js` using the rewrite in `vercel.json`. Add the Vercel cron configuration only after an email provider and `CRON_SECRET` are configured.
 

@@ -21,8 +21,16 @@ const client = new pg.Client(postgresConnectionConfig(databaseUrl));
 await client.connect();
 try {
   for (const file of files) {
-    await client.query(await fs.readFile(new URL(file, directory), "utf8"));
-    console.log(`Applied ${file}`);
+    await client.query("BEGIN");
+    try {
+      await client.query(await fs.readFile(new URL(file, directory), "utf8"));
+      await client.query("COMMIT");
+      console.log(`Applied ${file}`);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      error.message = `Migration ${file} failed: ${error.message}`;
+      throw error;
+    }
   }
   console.log(`Database migration completed (${files.length} file(s))`);
 } finally {
