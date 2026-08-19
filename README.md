@@ -6,14 +6,18 @@ Node.js backend for the future sports portal frontend. It covers venue and equip
 
 Requirements: Node.js 20+ and pnpm/npm.
 
-1. Copy `.env.example` to `.env`. It starts in `AUTH_MODE=demo`, so no login setup is needed.
+1. Copy `.env.example` to `.env` and set the Supabase URL, anon key, service-role key, database URLs, and a long random `QR_TOKEN_SECRET`.
 2. Install dependencies with `pnpm install`.
-3. Run `pnpm dev`.
-4. Open `http://localhost:3000/api/v1/health`.
+3. Run `pnpm db:migrate`, then `pnpm auth:seed-admin` once.
+4. Run `pnpm dev` and open `http://localhost:3000/api/v1/health`.
 
-Without `DATABASE_URL` (or the `POSTGRES_URL` supplied by the Supabase Vercel integration), the API uses an in-memory store and data resets on restart or between Vercel serverless instances. This is intentional for the temporary demo deployment.
+The equipment module requires PostgreSQL/Supabase and does not have an in-memory adapter. `AUTH_MODE=demo` and the in-memory store remain only for automated tests and the unchanged legacy modules; do not use them for a deployment.
 
-For local development authentication, send these headers:
+`pnpm auth:seed-admin` creates `sportscomm@iiml.ac.in` through the Supabase Auth admin API. It reads `ADMIN_SEED_PASSWORD`, using the administrator email only when the variable is unset, and never resets an existing account. The seeded profile must change its password on first login. This is the only email that can hold the admin role. Other eligible accounts are students (`requester`) by default; the administrator assigns SportComm members or scorekeepers by email.
+
+The default eligible student rule is `^pgp\d{5}@iiml\.ac\.in$` (case-insensitive). The administrator can replace it in the dashboard; the rule is checked at signup and on every new login so yearly batch access can be rotated without deleting historical users.
+
+`AUTH_MODE=demo` remains available only for automated tests. In that mode, send these headers:
 
 ```text
 x-user-id: user-123
@@ -22,7 +26,7 @@ x-user-name: Example User
 x-user-role: requester | approver | scorekeeper | admin
 ```
 
-The deployed demo defaults to an admin identity. It is for development only; switch to OIDC before storing real user data.
+Never deploy with `AUTH_MODE=demo` or `AUTH_MODE=password`. Use `AUTH_MODE=supabase`; the backend validates each bearer token with Supabase Auth and reads the effective role from the profile table.
 
 ## Database
 
@@ -35,9 +39,11 @@ DIRECT_DATABASE_URL="your Supabase direct connection URL" pnpm db:migrate
 pnpm db:seed
 ```
 
-On Windows PowerShell, use `$env:DIRECT_DATABASE_URL="your Supabase direct connection URL"; pnpm db:migrate`. Keep `AUTH_MODE=demo` until OAuth is introduced, then redeploy after adding or changing environment variables. The health response reports `storage: "postgres"` when the deployed function receives the database configuration.
+On Windows PowerShell, use `$env:DIRECT_DATABASE_URL="your Supabase direct connection URL"; pnpm db:migrate`. The health response reports `storage: "postgres"` when the deployed function receives the database configuration.
 
-The migration creates the relational model, overlap constraints, approval workflow, notification outbox, indexes, and append-only audit guard. Set `SEED_ADMIN_SUB`, `SEED_ADMIN_EMAIL`, and `SEED_ADMIN_NAME` before seeding if desired.
+Migration `005_supabase_equipment_custody.sql` adds sports, teams, POCs, requests, custody, one-use QR records, and custody audit entries. It also enables row-level security and installs the Supabase Auth profile trigger. QR records store only a hash; the opaque signed token is returned to the requester and expires after `QR_TOKEN_TTL_HOURS` (six hours by default).
+
+Migrations `006_equipment_catalog_and_photos.sql` and `007_equipment_catalog_seed.sql` add the shared campus-location and equipment-category catalogs, sport/category/location foreign keys, per-asset condition, the public `sports-media` Storage bucket, upload policies, and the idempotent starter inventory. Running `pnpm db:migrate` applies both; rerunning it does not duplicate catalog, equipment, or asset rows.
 
 ## Test
 
@@ -45,7 +51,7 @@ The migration creates the relational model, overlap constraints, approval workfl
 pnpm test
 ```
 
-The tests exercise the API with the in-memory adapter and cover permissions, privacy, venue/equipment conflicts, blackouts, approvals, and audit history.
+The tests cover the unchanged API behaviour plus signed equipment-token validation. Applying the migration and exercising RLS requires a configured Supabase test project.
 
 ## Deploy to Vercel
 

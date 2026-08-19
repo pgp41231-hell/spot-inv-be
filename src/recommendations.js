@@ -111,7 +111,7 @@ export function recommendSlots({
 
       if (requestedPeak && !candidatePeak) {
         score += 40;
-        reasons.push("Off-peak — quieter and usually approved faster");
+        reasons.push("Off-peak — usually less busy");
       } else if (candidatePeak === requestedPeak) {
         score += 10;
         reasons.push(candidatePeak ? "Same peak window" : "Off-peak, like your original request");

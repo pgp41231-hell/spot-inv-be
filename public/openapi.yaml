@@ -22,6 +22,46 @@ paths:
       summary: Service health
       responses:
         '200': { description: Healthy }
+  /auth/config:
+    get:
+      tags: [Public]
+      security: []
+      summary: Public signup eligibility configuration
+      responses:
+        '200': { description: Active email rule and fixed administrator email }
+  /auth/signup:
+    post:
+      tags: [Public]
+      security: []
+      summary: Register an eligible email/password account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, format: password }
+      responses:
+        '201': { description: Account and session created }
+        '403': { description: Email is not eligible }
+  /auth/login:
+    post:
+      tags: [Public]
+      security: []
+      summary: Sign in with an eligible registered account
+      responses:
+        '200': { description: User and session token }
+        '401': { description: Invalid credentials }
+  /auth/logout:
+    post:
+      tags: [Public]
+      summary: Revoke the current session
+      responses:
+        '204': { description: Session revoked }
   /public/venues:
     get:
       tags: [Public]
@@ -218,7 +258,7 @@ paths:
         '200': { $ref: '#/components/responses/ListResponse' }
     post:
       tags: [Bookings]
-      summary: Create a venue or equipment booking
+      summary: Instantly confirm an available venue booking; legacy equipment bookings may require approval
       requestBody:
         required: true
         content:
@@ -364,6 +404,36 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
         '200': { $ref: '#/components/responses/ItemResponse' }
+  /admin/auth-settings:
+    get:
+      tags: [Administration]
+      summary: Read the active email eligibility rule
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    put:
+      tags: [Administration]
+      summary: Replace the signup and login email regular expression
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+  /admin/role-assignments:
+    get:
+      tags: [Administration]
+      summary: List explicit non-student role assignments
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+    post:
+      tags: [Administration]
+      summary: Assign a role by email, including before signup
+      responses:
+        '201': { $ref: '#/components/responses/ItemResponse' }
+  /admin/role-assignments/{email}:
+    delete:
+      tags: [Administration]
+      summary: Remove an explicit role and restore the Student default
+      parameters:
+        - { in: path, name: email, required: true, schema: { type: string, format: email } }
+      responses:
+        '204': { description: Assignment removed }
   /admin/approval-flows:
     get:
       tags: [Administration]
@@ -401,6 +471,133 @@ paths:
       summary: Read append-only audit history
       responses:
         '200': { $ref: '#/components/responses/ListResponse' }
+  /account/password-changed:
+    post:
+      tags: [Administration]
+      summary: Clear the first-login password-change gate after Supabase Auth updateUser succeeds
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/sports:
+    get:
+      tags: [Resources]
+      summary: List sports and their POCs
+      responses: { '200': { $ref: '#/components/responses/ListResponse' } }
+  /equipment-module/teams:
+    get:
+      tags: [Resources]
+      summary: List sports teams and captains
+      responses: { '200': { $ref: '#/components/responses/ListResponse' } }
+  /equipment-module/requests:
+    get:
+      tags: [Resources]
+      summary: List visible equipment requests
+      responses: { '200': { $ref: '#/components/responses/ListResponse' } }
+    post:
+      tags: [Resources]
+      summary: Create a casual, team, or return equipment request
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/requests/{id}/decision:
+    post:
+      tags: [Approvals]
+      summary: Approve or reject an equipment request through its dedicated workflow
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/requests/{id}/qr:
+    post:
+      tags: [Resources]
+      summary: Generate or regenerate a signed expiring equipment QR token
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/kiosk/inspect:
+    post:
+      tags: [Resources]
+      summary: Validate a request QR and list the physical tags required for tracked items
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/kiosk/confirm:
+    post:
+      tags: [Resources]
+      summary: Validate exact asset scans, atomically change custody, and consume the request token
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/audit:
+    get:
+      tags: [Administration]
+      summary: Filter equipment custody state changes
+      responses: { '200': { $ref: '#/components/responses/ListResponse' } }
+  /public/equipment-catalog:
+    get:
+      tags: [Resources]
+      summary: List live sports (and shared campus locations used by venues)
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/inventory:
+    get:
+      tags: [Resources]
+      summary: Show sport-grouped allocation and custody quantities
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/inventory/{id}/transfer:
+    post:
+      tags: [Administration]
+      summary: Allocate in-store stock or record a reasoned manual custody correction
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /equipment-module/inventory/{id}/resolve:
+    post:
+      tags: [Administration]
+      summary: Restore damaged or missing inventory, or write it off
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/sports:
+    post:
+      tags: [Administration]
+      summary: Create a sport
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/campus-locations:
+    post:
+      tags: [Administration]
+      summary: Add a shared campus location
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/campus-locations/{id}:
+    patch:
+      tags: [Administration]
+      summary: Rename or activate/deactivate a campus location
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/inventory-kiosk:
+    post:
+      tags: [Administration]
+      summary: Create the one-time inventory kiosk Supabase Auth account
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/equipment/{id}/assets:
+    post:
+      tags: [Administration]
+      summary: Register asset tags or serial numbers for tracked equipment
+      responses: { '201': { $ref: '#/components/responses/ListResponse' } }
+  /admin/sports/{id}:
+    patch:
+      tags: [Administration]
+      summary: Rename or activate/deactivate a sport
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/sports/{id}/pocs:
+    put:
+      tags: [Administration]
+      summary: Assign primary and secondary SportComm POCs
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/sports/{id}/captain:
+    put:
+      tags: [Administration]
+      summary: Assign an existing Student account as the captain for a sport by email
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/teams:
+    post:
+      tags: [Administration]
+      summary: Create a team and assign its captain
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /admin/teams/{id}:
+    patch:
+      tags: [Administration]
+      summary: Update a team, captain, members, or active state
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
   /jobs/reminders:
     get:
       tags: [Administration]
@@ -423,24 +620,27 @@ components:
     ResourceType: { type: string, enum: [venue, equipment] }
     VenueInput:
       type: object
-      required: [name, category, capacity]
+      required: [name, sportId, location]
       properties:
         name: { type: string }
-        category: { type: string }
+        sportId: { type: [string, 'null'], format: uuid }
+        category: { type: string, deprecated: true, default: Sports venue }
         location: { type: [string, 'null'] }
-        capacity: { type: integer, minimum: 1 }
-        amenities: { type: array, items: { type: string } }
+        locationId: { type: [string, 'null'], format: uuid }
+        photoPath: { type: [string, 'null'] }
+        capacity: { type: integer, minimum: 1, deprecated: true, default: 1 }
+        amenities: { type: array, items: { type: string }, deprecated: true }
         rules: { type: object, additionalProperties: true }
         active: { type: boolean }
     EquipmentInput:
       type: object
-      required: [name, category, quantity]
+      required: [name, sportId, quantity]
       properties:
         name: { type: string }
-        category: { type: string }
-        location: { type: [string, 'null'] }
+        sportId: { type: string, format: uuid }
+        photoPath: { type: [string, 'null'] }
         quantity: { type: integer, minimum: 1 }
-        condition: { type: string, enum: [excellent, good, fair, maintenance, retired] }
+        tracking: { type: string, enum: [BULK, ASSET] }
         metadata: { type: object, additionalProperties: true }
         active: { type: boolean }
     BookingInput:

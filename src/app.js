@@ -10,25 +10,42 @@ import { AppError, badRequest, forbidden } from "./errors.js";
 import { assertBookingOwnerOrAdmin, publicBookingView, ROLES, validateInterval } from "./domain.js";
 import { assertHoldMatchesBooking, HOLD_TTL_MINUTES, holdPublicView, isHoldActive } from "./holds.js";
 import { describeRecommendations, DEFAULT_LIMIT, DEFAULT_WINDOW_DAYS, isPeak, recommendSlots } from "./recommendations.js";
-import { MemoryStore } from "./store/memory.js";
+import { MemoryStore, MEMORY_EQUIPMENT_SEED, MEMORY_VENUE_SEED } from "./store/memory.js";
 import { PostgresStore } from "./store/postgres.js";
+import {
+  BOOTSTRAP_ADMIN_EMAIL, compileEmailPattern, loginWithPassword, sessionTokenHash, signupWithPassword,
+} from "./password-auth.js";
+import { createEquipmentToken, equipmentTokenHash, verifyEquipmentToken } from "./equipment-tokens.js";
 
 const config = loadConfig();
 
 function defaultStore() {
   if (config.databaseUrl) return new PostgresStore(config.databaseUrl);
-  return new MemoryStore();
+  return new MemoryStore({ venues: MEMORY_VENUE_SEED, equipment: MEMORY_EQUIPMENT_SEED });
 }
 
 const id = z.string().min(1);
 const iso = z.string().datetime({ offset: true });
 const resourceType = z.enum(["venue", "equipment"]);
+const credentialsSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8).max(200),
+});
+const signupSchema = credentialsSchema.extend({ name: z.string().trim().min(2).max(120) });
+const emailRuleSchema = z.object({ emailPattern: z.string().min(3).max(500) });
+const roleAssignmentSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["requester", "approver", "scorekeeper"]),
+});
 
 const venueSchema = z.object({
   name: z.string().min(2),
-  category: z.string().min(2),
+  sportId: id.optional().nullable(),
+  category: z.string().min(2).default("Sports venue"),
   location: z.string().optional().nullable(),
-  capacity: z.number().int().positive(),
+  locationId: id.optional().nullable(),
+  photoPath: z.string().max(500).optional().nullable(),
+  capacity: z.number().int().positive().default(1),
   amenities: z.array(z.string()).default([]),
   rules: z.record(z.string(), z.unknown()).default({}),
   active: z.boolean().optional(),
@@ -36,12 +53,40 @@ const venueSchema = z.object({
 
 const equipmentSchema = z.object({
   name: z.string().min(2),
-  category: z.string().min(2),
-  location: z.string().optional().nullable(),
+  sportId: id,
+  photoPath: z.string().max(500).optional().nullable(),
   quantity: z.number().int().positive(),
-  condition: z.enum(["excellent", "good", "fair", "maintenance", "retired"]).default("good"),
   metadata: z.record(z.string(), z.unknown()).default({}),
+  tracking: z.enum(["ASSET", "BULK"]).default("BULK"),
   active: z.boolean().optional(),
+});
+
+const sportSchema = z.object({ name: z.string().trim().min(2).max(100), active: z.boolean().optional() });
+const pocsSchema = z.object({ primaryPocId: id.optional().nullable(), secondaryPocId: id.optional().nullable() });
+const teamSchema = z.object({
+  name: z.string().trim().min(2).max(120), sportId: id, captainId: id,
+  memberIds: z.array(id).default([]), active: z.boolean().optional(),
+});
+const equipmentRequestSchema = z.object({
+  requestType: z.enum(["CASUAL", "TEAM", "RETURN"]),
+  teamId: id.optional().nullable(), parentRequestId: id.optional().nullable(),
+  expectedReturnAt: iso.optional().nullable(),
+  items: z.array(z.object({ equipmentId: id, quantity: z.number().int().positive() })).min(1),
+});
+const equipmentDecisionSchema = z.object({ decision: z.enum(["approve", "reject"]), note: z.string().max(1000).optional().nullable() });
+const returnOutcomeSchema = z.object({ equipmentId: id, damaged: z.number().int().min(0).default(0), missing: z.number().int().min(0).default(0), note: z.string().max(1000).optional().nullable() });
+const assetScanSchema = z.object({
+  equipmentId: id, assetTag: z.string().trim().min(1).max(200),
+  outcome: z.enum(["RETURNED", "DAMAGED", "MISSING"]).optional(),
+  note: z.string().trim().max(1000).optional().nullable(),
+});
+const equipmentTransferSchema = z.object({
+  fromState: z.enum(["IN_INVENTORY", "CASUAL_POOL", "HELD_BY_TEAM", "ISSUED_TO_STUDENT", "DAMAGED", "MISSING"]),
+  toState: z.enum(["IN_INVENTORY", "CASUAL_POOL", "HELD_BY_TEAM", "ISSUED_TO_STUDENT", "DAMAGED", "MISSING"]),
+  quantity: z.number().int().positive(),
+  assetIds: z.array(id).default([]), custodyIds: z.array(id).default([]),
+  teamId: id.optional().nullable(), studentId: id.optional().nullable(),
+  reason: z.string().trim().max(1000).optional().nullable(),
 });
 
 const bookingSchema = z.object({
@@ -167,7 +212,8 @@ async function alternativesFor(store, { resourceType, resourceId, startAt, endAt
 
 export function createApp(options = {}) {
   const store = options.store || defaultStore();
-  const authenticate = options.authenticate || createAuthenticator(config.auth);
+  const authConfig = options.auth || config.auth;
+  const authenticate = options.authenticate || createAuthenticator(authConfig, store);
   const app = express();
   app.locals.store = store;
 
@@ -195,6 +241,19 @@ export function createApp(options = {}) {
     timestamp: new Date().toISOString(),
   }));
 
+  app.get("/api/v1/auth/config", async (_req, res) => {
+    const settings = await store.getAuthSettings();
+    res.json({ data: { emailPattern: settings.emailPattern, bootstrapAdminEmail: BOOTSTRAP_ADMIN_EMAIL } });
+  });
+  app.post("/api/v1/auth/signup", async (req, res) => {
+    const data = await signupWithPassword(store, parse(signupSchema, req.body));
+    res.status(201).json({ data });
+  });
+  app.post("/api/v1/auth/login", async (req, res) => {
+    const data = await loginWithPassword(store, parse(credentialsSchema, req.body));
+    res.json({ data });
+  });
+
   app.get("/api/v1/public/venues", async (req, res) => {
     const data = await store.listResources("venue", { active: true, category: req.query.category, q: req.query.q });
     res.json({ data });
@@ -202,6 +261,9 @@ export function createApp(options = {}) {
   app.get("/api/v1/public/equipment", async (req, res) => {
     const data = await store.listResources("equipment", { active: true, category: req.query.category, q: req.query.q });
     res.json({ data });
+  });
+  app.get("/api/v1/public/equipment-catalog", async (_req, res) => {
+    res.json({ data: await store.listEquipmentCatalog() });
   });
   app.get("/api/v1/public/availability", async (req, res) => {
     const filters = {
@@ -274,13 +336,90 @@ export function createApp(options = {}) {
   app.use("/api/v1", async (req, _res, next) => {
     try {
       if (req.path.startsWith("/jobs/")) return next();
-      req.user = await authenticate(req);
-      req.user = await store.ensureUser(req.user);
+      req.authIdentity = await authenticate(req);
+      req.user = await store.ensureUser(req.authIdentity);
+      if (authConfig.mode === "supabase") {
+        const authSettings = await store.getAuthSettings();
+        const privilegedServiceEmail = [BOOTSTRAP_ADMIN_EMAIL, "inventory@iiml.ac.in"].includes(req.user.email);
+        if (!privilegedServiceEmail && !compileEmailPattern(authSettings.emailPattern).test(req.user.email)) {
+          throw forbidden("This email is no longer eligible to sign in");
+        }
+      }
+      if (req.user.mustChangePassword && !["/me", "/account/password-changed", "/auth/logout"].includes(req.path)) {
+        throw new AppError(403, "MUST_CHANGE_PASSWORD", "Password change required before continuing");
+      }
       next();
     } catch (error) { next(error); }
   });
 
   app.get("/api/v1/me", (req, res) => res.json({ data: req.user }));
+  app.post("/api/v1/account/password-changed", async (req, res) => {
+    if (authConfig.mode === "supabase" && req.user.mustChangePassword) {
+      const authUpdatedAt = new Date(req.authIdentity.authUpdatedAt || 0).getTime();
+      const profileCreatedAt = new Date(req.user.createdAt || Date.now()).getTime();
+      if (authUpdatedAt <= profileCreatedAt) throw conflict("Update the password with Supabase Auth before clearing the first-login requirement");
+    }
+    res.json({ data: await store.clearMustChangePassword(req.user.id) });
+  });
+
+  // Equipment requests deliberately use their own workflow and never enter the
+  // venue reservation approval queue.
+  app.get("/api/v1/equipment-module/sports", async (_req, res) => res.json({ data: await store.listSports() }));
+  app.get("/api/v1/equipment-module/teams", async (_req, res) => res.json({ data: await store.listTeams() }));
+  app.get("/api/v1/equipment-module/requests", async (req, res) => res.json({ data: await store.listEquipmentRequests(req.user) }));
+  app.post("/api/v1/equipment-module/requests", async (req, res) => {
+    if (req.user.role === "inventory_kiosk") throw forbidden();
+    const input = parse(equipmentRequestSchema, req.body);
+    if (input.requestType === "CASUAL" && !input.expectedReturnAt) throw badRequest("Casual requests require an expected return time");
+    if (input.requestType === "TEAM" && !input.teamId) throw badRequest("Team requests require a team");
+    if (input.requestType === "RETURN" && !input.parentRequestId) throw badRequest("Return requests require the original request");
+    res.status(201).json({ data: await store.createEquipmentRequest(input, req.user) });
+  });
+  app.post("/api/v1/equipment-module/requests/:id/decision", requireRoles("approver", "admin"), async (req, res) => {
+    const input = parse(equipmentDecisionSchema, req.body);
+    res.json({ data: await store.decideEquipmentRequest(req.params.id, input.decision, input.note, req.user) });
+  });
+  app.post("/api/v1/equipment-module/requests/:id/qr", async (req, res) => {
+    const request = await store.getEquipmentRequest(req.params.id);
+    if (request.requesterId !== req.user.id && req.user.role !== "admin") throw forbidden();
+    if (request.status !== "APPROVED") throw conflict("A QR token requires a currently approved request");
+    const purpose = request.requestType === "RETURN" ? "RETURN" : "ISSUE";
+    const token = createEquipmentToken(config.qr.secret);
+    const expiresAt = new Date(Date.now() + config.qr.ttlHours * 60 * 60 * 1000).toISOString();
+    await store.createEquipmentQr({ requestId: request.id, purpose, tokenHash: equipmentTokenHash(token), expiresAt });
+    res.status(201).json({ data: { token, purpose, expiresAt } });
+  });
+  app.post("/api/v1/equipment-module/kiosk/inspect", requireRoles("inventory_kiosk", "admin"), async (req, res) => {
+    const { token } = parse(z.object({ token: z.string().min(20) }), req.body);
+    verifyEquipmentToken(token, config.qr.secret);
+    res.json({ data: await store.inspectEquipmentQr(equipmentTokenHash(token)) });
+  });
+  app.post("/api/v1/equipment-module/kiosk/confirm", requireRoles("inventory_kiosk", "admin"), async (req, res) => {
+    const input = parse(z.object({ token: z.string().min(20), outcomes: z.array(returnOutcomeSchema).default([]), assetScans: z.array(assetScanSchema).default([]) }), req.body);
+    verifyEquipmentToken(input.token, config.qr.secret);
+    res.json({ data: await store.redeemEquipmentQr(equipmentTokenHash(input.token), input.outcomes, input.assetScans, req.user) });
+  });
+  app.get("/api/v1/equipment-module/audit", requireRoles("approver", "admin"), async (req, res) => {
+    res.json({ data: await store.listEquipmentAudit(req.query) });
+  });
+  app.get("/api/v1/equipment-module/inventory", requireRoles("approver", "admin"), async (req, res) => {
+    res.json({ data: await store.listEquipmentInventory(req.query) });
+  });
+  app.post("/api/v1/equipment-module/inventory/:id/transfer", requireRoles("admin"), async (req, res) => {
+    const input = parse(equipmentTransferSchema, req.body);
+    const isAllocation = [input.fromState, input.toState].every((state) => ["IN_INVENTORY", "CASUAL_POOL"].includes(state));
+    if (!isAllocation && !input.reason) throw badRequest("Manual custody corrections require a reason");
+    res.json({ data: await store.transferEquipmentState(req.params.id, input, req.user) });
+  });
+  app.post("/api/v1/equipment-module/inventory/:id/resolve", requireRoles("admin"), async (req, res) => {
+    const { action } = parse(z.object({ action: z.enum(["restore", "writeoff"]) }), req.body);
+    res.json({ data: await store.resolveEquipmentException(req.params.id, action, req.user) });
+  });
+  app.post("/api/v1/auth/logout", async (req, res) => {
+    const token = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || "")?.[1];
+    if (token) await store.deleteAuthSession(sessionTokenHash(token));
+    res.status(204).end();
+  });
 
   for (const [path, type, schema] of [["venues", "venue", venueSchema], ["equipment", "equipment", equipmentSchema]]) {
     app.get(`/api/v1/${path}`, async (req, res) => {
@@ -294,11 +433,13 @@ export function createApp(options = {}) {
     });
     app.get(`/api/v1/${path}/:id`, async (req, res) => res.json({ data: await store.getResource(type, req.params.id) }));
     app.post(`/api/v1/${path}`, requireRoles("admin"), async (req, res) => {
-      const data = await store.createResource(type, parse(schema, req.body), req.user);
+      const input = parse(schema, req.body);
+      const data = await store.createResource(type, input, req.user);
       res.status(201).json({ data });
     });
     app.patch(`/api/v1/${path}/:id`, requireRoles("admin"), async (req, res) => {
-      const data = await store.updateResource(type, req.params.id, parse(schema.partial(), req.body), req.user);
+      const input = parse(schema.partial(), req.body);
+      const data = await store.updateResource(type, req.params.id, input, req.user);
       res.json({ data });
     });
     app.delete(`/api/v1/${path}/:id`, requireRoles("admin"), async (req, res) => {
@@ -427,10 +568,76 @@ export function createApp(options = {}) {
     res.json({ data: { booking: data, decisions: [...decisions, { stepId: step.id, decision }] } });
   });
 
-  app.get("/api/v1/admin/users", requireRoles("admin"), async (_req, res) => res.json({ data: await store.listUsers() }));
-  app.patch("/api/v1/admin/users/:id/role", requireRoles("admin"), async (req, res) => {
-    const { role } = parse(z.object({ role: z.enum(ROLES) }), req.body);
+  const requireBootstrapAdmin = (req, _res, next) => {
+    if (req.user.role !== "admin" || req.user.email !== BOOTSTRAP_ADMIN_EMAIL) return next(forbidden("Only the Sports Committee administrator can access this area"));
+    next();
+  };
+  app.post("/api/v1/admin/sports", requireBootstrapAdmin, async (req, res) => {
+    res.status(201).json({ data: await store.createSport(parse(sportSchema, req.body), req.user) });
+  });
+  app.post("/api/v1/admin/campus-locations", requireBootstrapAdmin, async (req, res) => {
+    res.status(201).json({ data: await store.createCatalogEntry("location", parse(sportSchema, req.body), req.user) });
+  });
+  app.patch("/api/v1/admin/campus-locations/:id", requireBootstrapAdmin, async (req, res) => {
+    res.json({ data: await store.updateCatalogEntry("location", req.params.id, parse(sportSchema.partial(), req.body), req.user) });
+  });
+  app.post("/api/v1/admin/inventory-kiosk", requireBootstrapAdmin, async (req, res) => {
+    const { password } = parse(z.object({ password: z.string().min(8).max(200) }), req.body);
+    if (!config.auth.supabaseUrl || !config.auth.supabaseServiceRoleKey) throw badRequest("Supabase service credentials are not configured");
+    const headers = { apikey: config.auth.supabaseServiceRoleKey, Authorization: `Bearer ${config.auth.supabaseServiceRoleKey}`, "Content-Type": "application/json" };
+    const list = await fetch(`${config.auth.supabaseUrl}/auth/v1/admin/users?page=1&per_page=1000`, { headers });
+    if (!list.ok) throw new AppError(502, "SUPABASE_AUTH_ERROR", "Could not inspect Supabase Auth users");
+    const payload = await list.json();
+    const users = Array.isArray(payload) ? payload : (payload.users || []);
+    if (users.some((item) => String(item.email).toLowerCase() === "inventory@iiml.ac.in")) throw conflict("The inventory kiosk account already exists; it was not reset or overwritten");
+    const created = await fetch(`${config.auth.supabaseUrl}/auth/v1/admin/users`, { method: "POST", headers, body: JSON.stringify({ email: "inventory@iiml.ac.in", password, email_confirm: true, user_metadata: { name: "Inventory Kiosk" } }) });
+    if (!created.ok) throw new AppError(502, "SUPABASE_AUTH_ERROR", "Could not create the inventory kiosk account");
+    res.status(201).json({ data: await store.markInventoryKiosk("inventory@iiml.ac.in") });
+  });
+  app.patch("/api/v1/admin/sports/:id", requireBootstrapAdmin, async (req, res) => {
+    res.json({ data: await store.updateSport(req.params.id, parse(sportSchema.partial(), req.body), req.user) });
+  });
+  app.put("/api/v1/admin/sports/:id/pocs", requireBootstrapAdmin, async (req, res) => {
+    res.json({ data: await store.setSportPocs(req.params.id, parse(pocsSchema, req.body), req.user) });
+  });
+  app.put("/api/v1/admin/sports/:id/captain", requireBootstrapAdmin, async (req, res) => {
+    const { email } = parse(z.object({ email: z.string().trim().email().transform((value) => value.toLowerCase()) }), req.body);
+    res.json({ data: await store.assignSportCaptain(req.params.id, email, req.user) });
+  });
+  app.post("/api/v1/admin/teams", requireBootstrapAdmin, async (req, res) => {
+    res.status(201).json({ data: await store.createTeam(parse(teamSchema, req.body), req.user) });
+  });
+  app.post("/api/v1/admin/equipment/:id/assets", requireBootstrapAdmin, async (req, res) => {
+    const input = parse(z.object({ assets: z.array(z.object({ assetTag: z.string().trim().min(1).max(100), serialNumber: z.string().trim().max(200).optional().nullable(), condition: z.enum(["excellent", "good", "fair", "maintenance", "retired"]).optional() })).min(1) }), req.body);
+    res.status(201).json({ data: await store.createEquipmentAssets(req.params.id, input.assets, req.user) });
+  });
+  app.patch("/api/v1/admin/teams/:id", requireBootstrapAdmin, async (req, res) => {
+    res.json({ data: await store.updateTeam(req.params.id, parse(teamSchema.partial(), req.body), req.user) });
+  });
+  app.get("/api/v1/admin/users", requireBootstrapAdmin, async (_req, res) => res.json({ data: await store.listUsers() }));
+  app.patch("/api/v1/admin/users/:id/role", requireBootstrapAdmin, async (req, res) => {
+    const { role } = parse(z.object({ role: z.enum(["requester", "approver", "scorekeeper"]) }), req.body);
     res.json({ data: await store.setUserRole(req.params.id, role) });
+  });
+  app.get("/api/v1/admin/role-assignments", requireBootstrapAdmin, async (_req, res) => {
+    res.json({ data: await store.listRoleAssignments() });
+  });
+  app.post("/api/v1/admin/role-assignments", requireBootstrapAdmin, async (req, res) => {
+    const { email, role } = parse(roleAssignmentSchema, req.body);
+    const data = await store.setRoleAssignment(email, role, req.user);
+    res.status(role === "requester" ? 200 : 201).json({ data });
+  });
+  app.delete("/api/v1/admin/role-assignments/:email", requireBootstrapAdmin, async (req, res) => {
+    await store.deleteRoleAssignment(req.params.email, req.user);
+    res.status(204).end();
+  });
+  app.get("/api/v1/admin/auth-settings", requireBootstrapAdmin, async (_req, res) => {
+    res.json({ data: await store.getAuthSettings() });
+  });
+  app.put("/api/v1/admin/auth-settings", requireBootstrapAdmin, async (req, res) => {
+    const { emailPattern } = parse(emailRuleSchema, req.body);
+    compileEmailPattern(emailPattern);
+    res.json({ data: await store.setEmailPattern(emailPattern, req.user) });
   });
   app.get("/api/v1/admin/approval-flows", requireRoles("admin"), async (_req, res) => res.json({ data: await store.listApprovalFlows() }));
   app.post("/api/v1/admin/approval-flows", requireRoles("admin"), async (req, res) => {

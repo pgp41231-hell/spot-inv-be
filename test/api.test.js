@@ -60,7 +60,7 @@ test("demo configuration starts without database or SSO, while OIDC remains expl
   assert.throws(() => loadConfig({ AUTH_MODE: "oidc" }), /AUTH_MODE=oidc requires/);
 });
 
-test("venue booking, duplicate prevention, approval, privacy, and audit flow", async () => {
+test("venue booking confirms immediately while preserving conflicts, privacy, and audit", async () => {
   const venueResult = await request("/api/v1/venues", {
     method: "POST",
     role: "admin",
@@ -88,7 +88,7 @@ test("venue booking, duplicate prevention, approval, privacy, and audit flow", a
   };
   const bookingResult = await request("/api/v1/bookings", { method: "POST", body: bookingInput });
   assert.equal(bookingResult.response.status, 201);
-  assert.equal(bookingResult.json.data.status, "pending");
+  assert.equal(bookingResult.json.data.status, "approved");
   const bookingId = bookingResult.json.data.id;
 
   const duplicate = await request("/api/v1/bookings", { method: "POST", userId: "requester-2", body: { ...bookingInput, title: "Conflicting event" } });
@@ -103,17 +103,11 @@ test("venue booking, duplicate prevention, approval, privacy, and audit flow", a
 
   const pending = await request("/api/v1/approvals/pending", { role: "approver", userId: "approver-1" });
   assert.equal(pending.response.status, 200);
-  assert.equal(pending.json.data[0].id, bookingId);
-
-  const decision = await request(`/api/v1/approvals/${bookingId}/decision`, {
-    method: "POST", role: "approver", userId: "approver-1", body: { decision: "approve", comment: "Approved" },
-  });
-  assert.equal(decision.response.status, 200);
-  assert.equal(decision.json.data.booking.status, "approved");
+  assert.equal(pending.json.data.some((item) => item.id === bookingId), false);
 
   const audit = await request("/api/v1/admin/audit-log", { role: "admin", userId: "admin-1" });
   assert.equal(audit.response.status, 200);
-  assert.ok(audit.json.data.some((entry) => entry.action === "booking.approved"));
+  assert.ok(audit.json.data.some((entry) => entry.action === "booking.created" && entry.entityId === bookingId && entry.after.status === "approved"));
 });
 
 test("blackout blocks a booking and requesters cannot access admin endpoints", async () => {
@@ -138,10 +132,43 @@ test("blackout blocks a booking and requesters cannot access admin endpoints", a
   assert.equal(forbiddenResult.response.status, 403);
 });
 
+test("one account cannot book overlapping venues but adjacent slots remain valid", async () => {
+  const makeVenue = async (name) => (await request("/api/v1/venues", {
+    method: "POST", role: "admin", userId: "admin-1",
+    body: { name, category: "court", location: "Campus", capacity: 1, amenities: [] },
+  })).json.data.id;
+  const firstVenueId = await makeVenue("Single-account Court A");
+  const secondVenueId = await makeVenue("Single-account Court B");
+  const first = await request("/api/v1/bookings", {
+    method: "POST", userId: "requester-one-court",
+    body: { resourceType: "venue", resourceId: firstVenueId, title: "First court", startAt: "2031-04-10T10:00:00.000Z", endAt: "2031-04-10T11:00:00.000Z" },
+  });
+  assert.equal(first.response.status, 201);
+
+  const otherAccount = await request("/api/v1/bookings", {
+    method: "POST", userId: "requester-other-court",
+    body: { resourceType: "venue", resourceId: secondVenueId, title: "Other account", startAt: "2031-04-10T10:00:00.000Z", endAt: "2031-04-10T11:00:00.000Z" },
+  });
+  assert.equal(otherAccount.response.status, 201);
+
+  const overlap = await request("/api/v1/bookings", {
+    method: "POST", userId: "requester-one-court",
+    body: { resourceType: "venue", resourceId: secondVenueId, title: "Overlapping court", startAt: "2031-04-10T10:30:00.000Z", endAt: "2031-04-10T11:30:00.000Z" },
+  });
+  assert.equal(overlap.response.status, 409);
+  assert.match(overlap.json.error.message, /already have another venue booked/i);
+
+  const adjacent = await request("/api/v1/bookings", {
+    method: "POST", userId: "requester-one-court",
+    body: { resourceType: "venue", resourceId: secondVenueId, title: "Next court", startAt: "2031-04-10T11:00:00.000Z", endAt: "2031-04-10T12:00:00.000Z" },
+  });
+  assert.equal(adjacent.response.status, 201);
+});
+
 test("equipment stock supports concurrent quantities up to inventory", async () => {
   const equipment = await request("/api/v1/equipment", {
     method: "POST", role: "admin", userId: "admin-1",
-    body: { name: "Badminton Racquet", category: "racquet", quantity: 3, condition: "good" },
+    body: { name: "Badminton Racquet", sportId: "00000000-0000-4000-8000-000000000001", quantity: 3, tracking: "BULK" },
   });
   const equipmentId = equipment.json.data.id;
   const base = { resourceType: "equipment", resourceId: equipmentId, startAt: "2027-03-01T10:00:00.000Z", endAt: "2027-03-01T11:00:00.000Z" };

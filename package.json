@@ -12,7 +12,8 @@
     "test": "node --test",
     "vercel-build": "node scripts/migrate.js",
     "db:migrate": "node scripts/migrate.js",
-    "db:seed": "node scripts/seed.js"
+    "db:seed": "node scripts/seed.js",
+    "auth:seed-admin": "node scripts/seed-admin.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",

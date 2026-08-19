@@ -52,7 +52,7 @@ async function makeVenue(name) {
 async function makeEquipment(name, quantity) {
   const result = await request("/api/v1/equipment", {
     method: "POST", role: "admin", userId: "admin-1",
-    body: { name, category: "racquet", quantity, condition: "good" },
+    body: { name, sportId: "00000000-0000-4000-8000-000000000001", quantity, tracking: "BULK" },
   });
   assert.equal(result.response.status, 201);
   return result.json.data.id;
