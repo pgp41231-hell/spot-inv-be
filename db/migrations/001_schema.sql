@@ -418,6 +418,39 @@ CREATE TABLE IF NOT EXISTS matches (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Additive columns for the frontend's Fixtures/Tournaments/Committee module:
+-- multi-sport committee tags, a tournament's venue and one-line blurb (for
+-- its gallery card), and linking a gallery photo to the tournament it was
+-- taken at. ADD COLUMN IF NOT EXISTS keeps this safe to run against an
+-- already-deployed database, not just a fresh one — same idempotency
+-- guarantee as every other statement in this baseline.
+ALTER TABLE committee_members ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS blurb text;
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS venue text;
+ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS tournament_id uuid REFERENCES tournaments(id) ON DELETE CASCADE;
+-- `venue_id` links to a real bookable venue record; `venue` is a plain-text
+-- fallback (e.g. "Indoor Court 2") for grounds/venues that aren't in the
+-- venues table (or haven't been matched up yet) but still need a label on
+-- the fixture card. `stage` is the round/bracket label (e.g. "Men's Singles
+-- - Semifinal"), separate from `notes` (a live-match note or final result).
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS venue text;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS stage text;
+
+-- Section-wise points standings per tournament (e.g. Sangram's Section A-I
+-- table, one row per section/sport pair). Previously had no backend
+-- equivalent at all — the frontend invented the numbers locally.
+CREATE TABLE IF NOT EXISTS standings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tournament_id uuid NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+  section text NOT NULL,
+  sport text NOT NULL,
+  points integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tournament_id, section, sport)
+);
+CREATE INDEX IF NOT EXISTS standings_tournament_idx ON standings(tournament_id);
+
 CREATE TABLE IF NOT EXISTS notification_outbox (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   recipient text NOT NULL,

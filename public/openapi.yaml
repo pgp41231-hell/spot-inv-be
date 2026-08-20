@@ -172,12 +172,12 @@ paths:
     get:
       tags: [Public]
       security: []
-      summary: List public committee, gallery, tournament, or match content
+      summary: List public committee, gallery, tournament, match, or standings content
       parameters:
         - in: path
           name: contentType
           required: true
-          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+          schema: { type: string, enum: [committee, gallery, tournaments, matches, standings] }
         - { in: query, name: tournamentId, schema: { type: string, format: uuid } }
       responses:
         '200': { $ref: '#/components/responses/ListResponse' }
@@ -366,17 +366,17 @@ paths:
         - in: path
           name: contentType
           required: true
-          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+          schema: { type: string, enum: [committee, gallery, tournaments, matches, standings] }
       responses:
         '200': { $ref: '#/components/responses/ListResponse' }
     post:
       tags: [Sports Content]
-      summary: Create sports content (admin; scorekeeper also allowed for matches)
+      summary: Create sports content (admin; scorekeeper also allowed for matches and standings)
       parameters:
         - in: path
           name: contentType
           required: true
-          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+          schema: { type: string, enum: [committee, gallery, tournaments, matches, standings] }
       responses:
         '201': { $ref: '#/components/responses/ItemResponse' }
   /{contentType}/{id}:
@@ -387,7 +387,18 @@ paths:
         - in: path
           name: contentType
           required: true
-          schema: { type: string, enum: [committee, gallery, tournaments, matches] }
+          schema: { type: string, enum: [committee, gallery, tournaments, matches, standings] }
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+    delete:
+      tags: [Sports Content]
+      summary: Delete sports content (admin; scorekeeper also allowed for matches and standings)
+      parameters:
+        - in: path
+          name: contentType
+          required: true
+          schema: { type: string, enum: [committee, gallery, tournaments, matches, standings] }
         - { $ref: '#/components/parameters/Id' }
       responses:
         '200': { $ref: '#/components/responses/ItemResponse' }

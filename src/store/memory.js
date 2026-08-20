@@ -60,6 +60,7 @@ export class MemoryStore {
     this.gallery = new Map();
     this.tournaments = new Map();
     this.matches = new Map();
+    this.standings = new Map();
     this.notifications = new Map();
     this.audit = [];
 
@@ -840,6 +841,12 @@ export class MemoryStore {
     this[type].set(id, after);
     await this.appendAudit(actor, `${type}.updated`, type, id, before, after);
     return clone(after);
+  }
+
+  async deleteContent(type, id, actor) {
+    const before = await this.getContent(type, id);
+    this[type].delete(id);
+    await this.appendAudit(actor, `${type}.deleted`, type, id, before, null);
   }
 
   async utilization(from, to) {
