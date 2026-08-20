@@ -42,6 +42,7 @@ export class MemoryStore {
     this.roleAssignments = new Map();
     this.authSettings = { emailPattern: DEFAULT_EMAIL_PATTERN, updatedAt: now(), updatedBy: null };
     this.venues = new Map();
+    this.venueMaintenanceRequests = new Map();
     this.equipment = new Map();
     this.equipmentAssets = new Map();
     this.equipmentRequests = new Map();
@@ -382,6 +383,46 @@ export class MemoryStore {
       ? [...this.equipmentRequests.values()].find((item) => item.id !== request.id && item.requesterId === request.requesterId && item.requestType === "CASUAL" && ["ISSUED", "RETURN_PENDING"].includes(item.status))
       : null;
     return clone({ ...token, ...request, purpose: token.purpose, items, concurrentIssueWarning: activeIssue || null });
+  }
+
+  async listVenueMaintenanceRequests(user) {
+    const staff = ["approver", "admin"].includes(user.role);
+    const requests = [...this.venueMaintenanceRequests.values()]
+      .filter((request) => staff || request.reporterId === user.id)
+      .map((request) => ({
+        ...request,
+        venueName: this.venues.get(request.venueId)?.name || "Unknown venue",
+        reporterName: this.users.get(request.reporterId)?.name || request.reporterName,
+        reporterEmail: this.users.get(request.reporterId)?.email || request.reporterEmail,
+        reviewedByName: request.reviewedBy ? this.users.get(request.reviewedBy)?.name || null : null,
+      }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return clone(requests);
+  }
+
+  async createVenueMaintenanceRequest(data, actor) {
+    const venue = await this.getResource("venue", data.venueId);
+    const record = {
+      id: randomUUID(), ...clone(data), venueName: venue.name,
+      reporterId: actor.id, reporterName: actor.name, reporterEmail: actor.email,
+      status: "REPORTED", reviewNote: null, expectedResolutionAt: null,
+      reviewedBy: null, resolvedAt: null, createdAt: now(), updatedAt: now(),
+    };
+    this.venueMaintenanceRequests.set(record.id, record);
+    await this.appendAudit(actor, "venue.maintenance.reported", "venue_maintenance", record.id, null, record);
+    return clone(record);
+  }
+
+  async updateVenueMaintenanceRequest(id, data, actor) {
+    const before = this.venueMaintenanceRequests.get(id);
+    if (!before) throw notFound("Maintenance request");
+    const after = {
+      ...before, ...clone(data), reviewedBy: actor.id, reviewedByName: actor.name,
+      resolvedAt: data.status === "RESOLVED" ? now() : null, updatedAt: now(),
+    };
+    this.venueMaintenanceRequests.set(id, after);
+    await this.appendAudit(actor, "venue.maintenance.updated", "venue_maintenance", id, before, after);
+    return clone(after);
   }
 
   async redeemEquipmentQr(tokenHash, outcomes = [], assetScans = [], actor, confirmConcurrentIssue = false) {

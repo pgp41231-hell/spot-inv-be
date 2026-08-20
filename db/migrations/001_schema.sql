@@ -841,6 +841,39 @@ JOIN sports sport ON lower(sport.name)=lower(seed.sport)
 WHERE NOT EXISTS (SELECT 1 FROM venues venue WHERE lower(venue.name)=lower(seed.name));
 
 -- Fail the build with a direct message if this baseline ever becomes incomplete.
+CREATE TABLE IF NOT EXISTS venue_maintenance_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  venue_id uuid NOT NULL REFERENCES venues(id),
+  reporter_id text NOT NULL REFERENCES app_users(id),
+  category text NOT NULL CHECK (category IN ('CLEANING','LIGHTING','PLAYING_SURFACE','NET_OR_POST','SEATING','WATER','ELECTRICAL','SAFETY','OTHER')),
+  title text NOT NULL,
+  description text NOT NULL,
+  exact_area text,
+  urgency text NOT NULL DEFAULT 'NORMAL' CHECK (urgency IN ('LOW','NORMAL','URGENT')),
+  status text NOT NULL DEFAULT 'REPORTED' CHECK (status IN ('REPORTED','ACKNOWLEDGED','IN_PROGRESS','RESOLVED','REJECTED')),
+  review_note text,
+  expected_resolution_at timestamptz,
+  reviewed_by text REFERENCES app_users(id),
+  resolved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS venue_maintenance_status_idx ON venue_maintenance_requests(status,created_at DESC);
+CREATE INDEX IF NOT EXISTS venue_maintenance_reporter_idx ON venue_maintenance_requests(reporter_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS venue_maintenance_venue_idx ON venue_maintenance_requests(venue_id,created_at DESC);
+ALTER TABLE venue_maintenance_requests ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maintenance_visibility ON venue_maintenance_requests;
+CREATE POLICY maintenance_visibility ON venue_maintenance_requests FOR SELECT TO authenticated
+USING (reporter_id=(SELECT auth.uid())::text OR (SELECT private.current_app_role()) IN ('approver','admin'));
+DROP POLICY IF EXISTS maintenance_reporter_insert ON venue_maintenance_requests;
+CREATE POLICY maintenance_reporter_insert ON venue_maintenance_requests FOR INSERT TO authenticated
+WITH CHECK (reporter_id=(SELECT auth.uid())::text AND EXISTS (SELECT 1 FROM venues WHERE id=venue_id AND active));
+DROP POLICY IF EXISTS maintenance_staff_update ON venue_maintenance_requests;
+CREATE POLICY maintenance_staff_update ON venue_maintenance_requests FOR UPDATE TO authenticated
+USING ((SELECT private.current_app_role()) IN ('approver','admin'))
+WITH CHECK ((SELECT private.current_app_role()) IN ('approver','admin'));
+GRANT SELECT,INSERT,UPDATE ON venue_maintenance_requests TO authenticated;
+
 DO $$
 DECLARE missing_tables text;
 BEGIN
@@ -848,7 +881,8 @@ BEGIN
   FROM (VALUES
     ('app_users'),('venues'),('bookings'),('slot_holds'),('sports'),('teams'),
     ('equipment_items'),('equipment_assets'),('equipment_allocations'),
-    ('equipment_requests'),('equipment_custody'),('equipment_qr_tokens'),('equipment_state_audit')
+    ('equipment_requests'),('equipment_custody'),('equipment_qr_tokens'),('equipment_state_audit'),
+    ('venue_maintenance_requests')
   ) AS required(name)
   WHERE to_regclass('public.' || required.name) IS NULL;
   IF missing_tables IS NOT NULL THEN RAISE EXCEPTION 'Schema baseline incomplete; missing: %',missing_tables; END IF;

@@ -286,6 +286,49 @@ export class PostgresStore {
     return this.updateResource(type, id, { active: false }, actor);
   }
 
+  async listVenueMaintenanceRequests(user) {
+    const staff = ["approver", "admin"].includes(user.role);
+    const result = await this.sql.query(
+      `SELECT request.*, venue.name AS venue_name, reporter.name AS reporter_name,
+              reporter.email AS reporter_email, reviewer.name AS reviewed_by_name
+       FROM venue_maintenance_requests request
+       JOIN venues venue ON venue.id=request.venue_id
+       JOIN app_users reporter ON reporter.id=request.reporter_id
+       LEFT JOIN app_users reviewer ON reviewer.id=request.reviewed_by
+       WHERE $1::boolean OR request.reporter_id=$2
+       ORDER BY request.created_at DESC`,
+      [staff, user.id],
+    );
+    return rows(result);
+  }
+
+  async createVenueMaintenanceRequest(data, actor) {
+    const result = await this.sql.query(
+      `INSERT INTO venue_maintenance_requests
+       (venue_id,reporter_id,category,title,description,exact_area,urgency)
+       VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [data.venueId, actor.id, data.category, data.title, data.description, data.exactArea || null, data.urgency],
+    );
+    const record = camel(result[0]);
+    await this.appendAudit(actor, "venue.maintenance.reported", "venue_maintenance", record.id, null, record);
+    return record;
+  }
+
+  async updateVenueMaintenanceRequest(id, data, actor) {
+    const beforeResult = await this.sql.query("SELECT * FROM venue_maintenance_requests WHERE id=$1", [id]);
+    if (!beforeResult[0]) throw notFound("Maintenance request");
+    const result = await this.sql.query(
+      `UPDATE venue_maintenance_requests SET status=$2,review_note=$3,
+       expected_resolution_at=$4,reviewed_by=$5,
+       resolved_at=CASE WHEN $2='RESOLVED' THEN now() ELSE NULL END,updated_at=now()
+       WHERE id=$1 RETURNING *`,
+      [id, data.status, data.reviewNote || null, data.expectedResolutionAt || null, actor.id],
+    );
+    const record = camel(result[0]);
+    await this.appendAudit(actor, "venue.maintenance.updated", "venue_maintenance", id, camel(beforeResult[0]), record);
+    return record;
+  }
+
   async listBlackouts(resourceType, resourceId) {
     const result = await this.sql.query(
       `SELECT * FROM blackouts WHERE ($1::text IS NULL OR resource_type=$1)

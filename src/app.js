@@ -51,6 +51,20 @@ const venueSchema = z.object({
   active: z.boolean().optional(),
 });
 
+const maintenanceRequestSchema = z.object({
+  venueId: id,
+  category: z.enum(["CLEANING", "LIGHTING", "PLAYING_SURFACE", "NET_OR_POST", "SEATING", "WATER", "ELECTRICAL", "SAFETY", "OTHER"]),
+  title: z.string().trim().min(3).max(160),
+  description: z.string().trim().min(5).max(3000),
+  exactArea: z.string().trim().max(300).optional().nullable(),
+  urgency: z.enum(["LOW", "NORMAL", "URGENT"]).default("NORMAL"),
+});
+const maintenanceUpdateSchema = z.object({
+  status: z.enum(["REPORTED", "ACKNOWLEDGED", "IN_PROGRESS", "RESOLVED", "REJECTED"]),
+  reviewNote: z.string().trim().max(2000).optional().nullable(),
+  expectedResolutionAt: iso.optional().nullable(),
+});
+
 const equipmentSchema = z.object({
   name: z.string().min(2),
   sportId: id,
@@ -445,6 +459,21 @@ export function createApp(options = {}) {
     const token = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || "")?.[1];
     if (token) await store.deleteAuthSession(sessionTokenHash(token));
     res.status(204).end();
+  });
+
+  app.get("/api/v1/venue-maintenance", async (req, res) => {
+    res.json({ data: await store.listVenueMaintenanceRequests(req.user) });
+  });
+  app.post("/api/v1/venue-maintenance", async (req, res) => {
+    if (req.user.role === "inventory_kiosk") throw forbidden();
+    const input = parse(maintenanceRequestSchema, req.body);
+    const venue = await store.getResource("venue", input.venueId);
+    if (!venue.active) throw badRequest("Maintenance requests can only be raised for active venues");
+    res.status(201).json({ data: await store.createVenueMaintenanceRequest(input, req.user) });
+  });
+  app.patch("/api/v1/venue-maintenance/:id", requireRoles("approver", "admin"), async (req, res) => {
+    const input = parse(maintenanceUpdateSchema, req.body);
+    res.json({ data: await store.updateVenueMaintenanceRequest(req.params.id, input, req.user) });
   });
 
   for (const [path, type, schema] of [["venues", "venue", venueSchema], ["equipment", "equipment", equipmentSchema]]) {

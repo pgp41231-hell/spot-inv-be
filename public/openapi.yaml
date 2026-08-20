@@ -644,6 +644,22 @@ paths:
       tags: [Administration]
       summary: Update a team, captain, members, or active state
       responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+  /venue-maintenance:
+    get:
+      tags: [Venues]
+      summary: List the caller's venue maintenance reports, or all reports for SportComm and administrators
+      responses: { '200': { $ref: '#/components/responses/ListResponse' } }
+    post:
+      tags: [Venues]
+      summary: Report a maintenance issue for an active venue
+      responses: { '201': { $ref: '#/components/responses/ItemResponse' } }
+  /venue-maintenance/{id}:
+    patch:
+      tags: [Venues]
+      summary: Update maintenance status and committee response as SportComm or administrator
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
   /jobs/reminders:
     get:
       tags: [Administration]
