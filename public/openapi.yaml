@@ -499,7 +499,25 @@ paths:
     post:
       tags: [Approvals]
       summary: Approve or reject an equipment request through its dedicated workflow
-      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, reject] }
+                note: { type: string, maxLength: 1000, nullable: true }
+                confirmConcurrentIssue:
+                  type: boolean
+                  default: false
+                  description: Explicit confirmation that another casual handover is allowed while the student already holds equipment.
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+        '409': { $ref: '#/components/responses/ErrorResponse' }
   /equipment-module/requests/{id}/qr:
     post:
       tags: [Resources]

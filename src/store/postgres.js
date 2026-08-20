@@ -999,13 +999,24 @@ export class PostgresStore {
         "INSERT INTO equipment_request_items(request_id,equipment_id,quantity) VALUES($1,$2,$3)",
         [request.id, item.equipmentId, item.quantity],
       );
+      await client.query(
+        `INSERT INTO audit_log(actor_id,action,entity_type,entity_id,before_state,after_state)
+         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
+        [
+          actor.id,
+          `equipment_request.${data.requestType.toLowerCase()}.created`,
+          "equipment_request",
+          String(request.id),
+          null,
+          JSON.stringify(request),
+        ],
+      );
       await client.query("COMMIT");
-      await this.appendAudit(actor, `equipment_request.${data.requestType.toLowerCase()}.created`, "equipment_request", request.id, null, request);
       return camel(request);
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
   }
 
-  async decideEquipmentRequest(id, decision, note, actor) {
+  async decideEquipmentRequest(id, decision, note, actor, confirmConcurrentIssue = false) {
     const request = (await this.sql.query("SELECT * FROM equipment_requests WHERE id=$1", [id]))[0];
     if (!request) throw notFound("Equipment request");
     if (request.status !== "PENDING") throw conflict("This equipment request has already been decided");
@@ -1016,19 +1027,42 @@ export class PostgresStore {
       allowed = Boolean(pocs[0] && [pocs[0].primary_poc_id, pocs[0].secondary_poc_id].includes(actor.id));
     }
     if (!allowed) throw forbidden("You can view this request but are not its assigned approver");
+    const activeIssue = decision === "approve" && request.request_type === "CASUAL"
+      ? (await this.sql.query(
+        `SELECT r.id,r.due_at,COALESCE(jsonb_agg(jsonb_build_object('name',e.name,'quantity',ri.quantity))
+          FILTER (WHERE e.id IS NOT NULL),'[]'::jsonb) AS items
+         FROM equipment_requests r
+         LEFT JOIN equipment_request_items ri ON ri.request_id=r.id
+         LEFT JOIN equipment_items e ON e.id=ri.equipment_id
+         WHERE r.requester_id=$1 AND r.request_type='CASUAL'
+           AND r.status IN ('ISSUED','RETURN_PENDING') AND r.id<>$2
+         GROUP BY r.id,r.due_at ORDER BY r.created_at LIMIT 1`,
+        [request.requester_id, id],
+      ))[0]
+      : null;
+    if (activeIssue && !confirmConcurrentIssue) {
+      throw conflict(
+        "This student already has equipment issued. Confirm approval again to allow another handover.",
+        { requiresConfirmation: true, activeIssue: camel(activeIssue) },
+      );
+    }
     const status = decision === "approve" ? "APPROVED" : "REJECTED";
     const override = actor.role === "admin";
+    const concurrentIssueOverride = Boolean(activeIssue && confirmConcurrentIssue);
     let result;
     try { result = await this.sql.query(
       `UPDATE equipment_requests SET status=$2,decision_note=$3,approved_by=$4,approved_at=now(),
        due_at=CASE WHEN request_type='CASUAL' AND $2='APPROVED' THEN expected_return_at ELSE due_at END,
-       administrator_override=$5,updated_at=now() WHERE id=$1 RETURNING *`,
-      [id, status, note || null, actor.id, override],
+       administrator_override=$5,allow_concurrent_issue=$6,updated_at=now() WHERE id=$1 RETURNING *`,
+      [id, status, note || null, actor.id, override, concurrentIssueOverride],
     ); } catch (error) {
       if (error.constraint === "one_active_casual_issue_per_student") throw conflict("This student already has an active casual equipment issue");
       throw error;
     }
-    await this.appendAudit(actor, override ? `equipment_request.admin_override.${decision}` : `equipment_request.${decision}`, "equipment_request", id, request, result[0]);
+    const auditAction = concurrentIssueOverride
+      ? "equipment_request.concurrent_issue_override.approve"
+      : override ? `equipment_request.admin_override.${decision}` : `equipment_request.${decision}`;
+    await this.appendAudit(actor, auditAction, "equipment_request", id, request, result[0]);
     return camel(result[0]);
   }
 
@@ -1042,7 +1076,7 @@ export class PostgresStore {
 
   async inspectEquipmentQr(tokenHash) {
     const result = await this.sql.query(
-      `SELECT q.*,r.request_type,r.status,r.requester_id,r.team_id,r.parent_request_id,
+      `SELECT q.*,r.request_type,r.status,r.requester_id,r.team_id,r.parent_request_id,r.allow_concurrent_issue,
        u.name AS requester_name,u.email AS requester_email,t.name AS team_name,
        used.name AS used_by_name,used.email AS used_by_email
        FROM equipment_qr_tokens q JOIN equipment_requests r ON r.id=q.request_id
@@ -1089,7 +1123,7 @@ export class PostgresStore {
     try {
       await client.query("BEGIN");
       const token = (await client.query(
-        `SELECT q.*,r.request_type,r.requester_id,r.team_id,r.parent_request_id,r.status
+        `SELECT q.*,r.request_type,r.requester_id,r.team_id,r.parent_request_id,r.status,r.allow_concurrent_issue
          FROM equipment_qr_tokens q JOIN equipment_requests r ON r.id=q.request_id WHERE q.token_hash=$1 FOR UPDATE OF q,r`, [tokenHash],
       )).rows[0];
       if (!token) throw unauthorized("Invalid equipment QR token");
@@ -1111,7 +1145,7 @@ export class PostgresStore {
       const scansFor = (equipmentId) => normalizedAssetScans.filter((scan) => scan.equipmentId === equipmentId);
       if (token.purpose === "ISSUE") {
         if (token.status !== "APPROVED") throw conflict("The approval is no longer valid");
-        if (token.request_type === "CASUAL") {
+        if (token.request_type === "CASUAL" && !token.allow_concurrent_issue) {
           const activeIssue = (await client.query(
             `SELECT id FROM equipment_requests WHERE requester_id=$1 AND request_type='CASUAL'
              AND status IN ('ISSUED','RETURN_PENDING') AND id<>$2 LIMIT 1 FOR SHARE`,

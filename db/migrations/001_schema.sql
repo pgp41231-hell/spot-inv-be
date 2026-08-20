@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS equipment_requests (
   approved_by text REFERENCES app_users(id),
   approved_at timestamptz,
   administrator_override boolean NOT NULL DEFAULT false,
+  allow_concurrent_issue boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
@@ -199,9 +200,11 @@ CREATE TABLE IF NOT EXISTS equipment_requests (
     OR (request_type='RETURN' AND parent_request_id IS NOT NULL)
   )
 );
-CREATE UNIQUE INDEX IF NOT EXISTS one_active_casual_issue_per_student
+ALTER TABLE equipment_requests ADD COLUMN IF NOT EXISTS allow_concurrent_issue boolean NOT NULL DEFAULT false;
+DROP INDEX IF EXISTS one_active_casual_issue_per_student;
+CREATE UNIQUE INDEX one_active_casual_issue_per_student
   ON equipment_requests(requester_id)
-  WHERE request_type='CASUAL' AND status IN ('ISSUED','RETURN_PENDING');
+  WHERE request_type='CASUAL' AND status IN ('ISSUED','RETURN_PENDING') AND NOT allow_concurrent_issue;
 CREATE INDEX IF NOT EXISTS equipment_requests_requester_idx ON equipment_requests(requester_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS equipment_requests_sport_status_idx ON equipment_requests(sport_id,status,created_at);
 

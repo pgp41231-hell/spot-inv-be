@@ -326,23 +326,33 @@ export class MemoryStore {
       requesterEmail: actor.email, teamId: team?.id || parent?.teamId || null, teamName: team?.name || parent?.teamName || null,
       sportId: team?.sportId || parent?.sportId || null, parentRequestId: parent?.id || null,
       expectedReturnAt: data.expectedReturnAt || null, dueAt: null,
-      status: data.requestType === "RETURN" ? "APPROVED" : "PENDING", items, createdAt: now(), updatedAt: now(),
+      status: data.requestType === "RETURN" ? "APPROVED" : "PENDING", allowConcurrentIssue: false, items, createdAt: now(), updatedAt: now(),
     };
     this.equipmentRequests.set(request.id, request);
     await this.appendAudit(actor, `equipment_request.${data.requestType.toLowerCase()}.created`, "equipment_request", request.id, null, request);
     return clone(request);
   }
 
-  async decideEquipmentRequest(id, decision, note, actor) {
+  async decideEquipmentRequest(id, decision, note, actor, confirmConcurrentIssue = false) {
     const request = this.equipmentRequests.get(id);
     if (!request) throw notFound("Equipment request");
     if (request.status !== "PENDING") throw conflict("This equipment request has already been decided");
     const sport = this.sports.find((item) => item.id === request.sportId);
     const allowed = actor.role === "admin" || (actor.role === "approver" && (request.requestType === "CASUAL" || [sport?.primaryPocId, sport?.secondaryPocId].includes(actor.id)));
     if (!allowed) throw forbidden("You can view this request but are not its assigned approver");
+    const activeIssue = decision === "approve" && request.requestType === "CASUAL"
+      ? [...this.equipmentRequests.values()].find((item) => item.id !== request.id && item.requesterId === request.requesterId && item.requestType === "CASUAL" && ["ISSUED", "RETURN_PENDING"].includes(item.status))
+      : null;
+    if (activeIssue && !confirmConcurrentIssue) {
+      throw conflict(
+        "This student already has equipment issued. Confirm approval again to allow another handover.",
+        { requiresConfirmation: true, activeIssue: clone(activeIssue) },
+      );
+    }
     const before = clone(request);
-    Object.assign(request, { status: decision === "approve" ? "APPROVED" : "REJECTED", decisionNote: note || null, approvedBy: actor.id, approvedAt: now(), dueAt: decision === "approve" && request.requestType === "CASUAL" ? request.expectedReturnAt : null, administratorOverride: actor.role === "admin", updatedAt: now() });
-    await this.appendAudit(actor, actor.role === "admin" ? `equipment_request.admin_override.${decision}` : `equipment_request.${decision}`, "equipment_request", id, before, request);
+    Object.assign(request, { status: decision === "approve" ? "APPROVED" : "REJECTED", decisionNote: note || null, approvedBy: actor.id, approvedAt: now(), dueAt: decision === "approve" && request.requestType === "CASUAL" ? request.expectedReturnAt : null, administratorOverride: actor.role === "admin", allowConcurrentIssue: Boolean(activeIssue && confirmConcurrentIssue), updatedAt: now() });
+    const auditAction = request.allowConcurrentIssue ? "equipment_request.concurrent_issue_override.approve" : actor.role === "admin" ? `equipment_request.admin_override.${decision}` : `equipment_request.${decision}`;
+    await this.appendAudit(actor, auditAction, "equipment_request", id, before, request);
     return clone(request);
   }
 
@@ -378,7 +388,7 @@ export class MemoryStore {
     const outcomeMap = new Map(outcomes.map((item) => [item.equipmentId, item]));
     const scansFor = (equipmentId) => assetScans.filter((scan) => scan.equipmentId === equipmentId);
     if (preview.purpose === "ISSUE") {
-      if (request.requestType === "CASUAL") {
+      if (request.requestType === "CASUAL" && !request.allowConcurrentIssue) {
         const activeIssue = [...this.equipmentRequests.values()].find((item) => item.id !== request.id && item.requesterId === request.requesterId && item.requestType === "CASUAL" && ["ISSUED", "RETURN_PENDING"].includes(item.status));
         if (activeIssue) throw conflict("This student already has equipment issued. Return it before collecting another approved request");
       }

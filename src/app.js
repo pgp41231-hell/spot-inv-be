@@ -73,7 +73,11 @@ const equipmentRequestSchema = z.object({
   expectedReturnAt: iso.optional().nullable(),
   items: z.array(z.object({ equipmentId: id, quantity: z.number().int().positive() })).min(1),
 });
-const equipmentDecisionSchema = z.object({ decision: z.enum(["approve", "reject"]), note: z.string().max(1000).optional().nullable() });
+const equipmentDecisionSchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  note: z.string().max(1000).optional().nullable(),
+  confirmConcurrentIssue: z.boolean().optional().default(false),
+});
 const returnOutcomeSchema = z.object({ equipmentId: id, damaged: z.number().int().min(0).default(0), missing: z.number().int().min(0).default(0), note: z.string().max(1000).optional().nullable() });
 const assetScanSchema = z.object({
   equipmentId: id, assetTag: z.string().trim().min(1).max(200),
@@ -377,7 +381,7 @@ export function createApp(options = {}) {
   });
   app.post("/api/v1/equipment-module/requests/:id/decision", requireRoles("approver", "admin"), async (req, res) => {
     const input = parse(equipmentDecisionSchema, req.body);
-    res.json({ data: await store.decideEquipmentRequest(req.params.id, input.decision, input.note, req.user) });
+    res.json({ data: await store.decideEquipmentRequest(req.params.id, input.decision, input.note, req.user, input.confirmConcurrentIssue) });
   });
   app.post("/api/v1/equipment-module/requests/:id/qr", async (req, res) => {
     const request = await store.getEquipmentRequest(req.params.id);

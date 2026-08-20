@@ -55,19 +55,25 @@ test("memory mode supports the casual request, approval, issue, and return lifec
   const request = await store.createEquipmentRequest({ requestType: "CASUAL", expectedReturnAt: new Date(Date.now() + 3_600_000).toISOString(), items: [{ equipmentId: "racquets", quantity: 4 }] }, student);
   assert.equal((await store.listEquipmentRequests(student))[0].status, "PENDING");
   await store.decideEquipmentRequest(request.id, "approve", null, approver);
-  const secondRequest = await store.createEquipmentRequest({ requestType: "CASUAL", expectedReturnAt: new Date(Date.now() + 7_200_000).toISOString(), items: [{ equipmentId: "racquets", quantity: 2 }] }, student);
-  await store.decideEquipmentRequest(secondRequest.id, "approve", null, approver);
-  assert.equal((await store.getEquipmentRequest(secondRequest.id)).status, "APPROVED");
   await store.createEquipmentQr({ requestId: request.id, purpose: "ISSUE", tokenHash: "issue-hash", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
   await store.redeemEquipmentQr("issue-hash", [], [], kiosk);
   assert.equal((await store.listEquipmentInventory()).items[0].withStudentsQuantity, 4);
+
+  const secondRequest = await store.createEquipmentRequest({ requestType: "CASUAL", expectedReturnAt: new Date(Date.now() + 7_200_000).toISOString(), items: [{ equipmentId: "racquets", quantity: 2 }] }, student);
+  await assert.rejects(
+    () => store.decideEquipmentRequest(secondRequest.id, "approve", null, approver),
+    /Confirm approval again/,
+  );
+  await store.decideEquipmentRequest(secondRequest.id, "approve", null, approver, true);
+  assert.equal((await store.getEquipmentRequest(secondRequest.id)).allowConcurrentIssue, true);
   await store.createEquipmentQr({ requestId: secondRequest.id, purpose: "ISSUE", tokenHash: "second-issue-hash", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
-  await assert.rejects(() => store.redeemEquipmentQr("second-issue-hash", [], [], kiosk), /Return it before collecting another approved request/);
+  await store.redeemEquipmentQr("second-issue-hash", [], [], kiosk);
+  assert.equal((await store.listEquipmentInventory()).items[0].withStudentsQuantity, 6);
   const returned = await store.createEquipmentRequest({ requestType: "RETURN", parentRequestId: request.id, items: [{ equipmentId: "racquets", quantity: 4 }] }, student);
   await store.createEquipmentQr({ requestId: returned.id, purpose: "RETURN", tokenHash: "return-hash", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
   await store.redeemEquipmentQr("return-hash", [], [], kiosk);
   const inventory = (await store.listEquipmentInventory()).items[0];
-  assert.equal(inventory.withStudentsQuantity, 0);
-  assert.equal(inventory.casualPoolQuantity, 20);
-  assert.equal((await store.listEquipmentAudit()).length, 2);
+  assert.equal(inventory.withStudentsQuantity, 2);
+  assert.equal(inventory.casualPoolQuantity, 18);
+  assert.equal((await store.listEquipmentAudit()).length, 3);
 });
