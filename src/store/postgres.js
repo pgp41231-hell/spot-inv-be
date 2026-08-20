@@ -1134,10 +1134,24 @@ export class PostgresStore {
       }
       token.items.push(item);
     }
+    if (token.purpose === "ISSUE" && token.requestType === "CASUAL") {
+      const activeIssue = (await this.sql.query(
+        `SELECT r.id,r.due_at,COALESCE(jsonb_agg(jsonb_build_object('name',e.name,'quantity',ri.quantity))
+          FILTER (WHERE e.id IS NOT NULL),'[]'::jsonb) AS items
+         FROM equipment_requests r
+         LEFT JOIN equipment_request_items ri ON ri.request_id=r.id
+         LEFT JOIN equipment_items e ON e.id=ri.equipment_id
+         WHERE r.requester_id=$1 AND r.request_type='CASUAL'
+           AND r.status IN ('ISSUED','RETURN_PENDING') AND r.id<>$2
+         GROUP BY r.id,r.due_at ORDER BY r.created_at LIMIT 1`,
+        [token.requesterId, token.requestId],
+      ))[0];
+      if (activeIssue) token.concurrentIssueWarning = camel(activeIssue);
+    }
     return token;
   }
 
-  async redeemEquipmentQr(tokenHash, outcomes, assetScans, actor) {
+  async redeemEquipmentQr(tokenHash, outcomes, assetScans, actor, confirmConcurrentIssue = false) {
     if (!["inventory_kiosk", "admin"].includes(actor.role)) throw forbidden("Only the inventory kiosk can scan equipment QR codes");
     const client = await this.pool.connect();
     try {
@@ -1165,13 +1179,26 @@ export class PostgresStore {
       const scansFor = (equipmentId) => normalizedAssetScans.filter((scan) => scan.equipmentId === equipmentId);
       if (token.purpose === "ISSUE") {
         if (token.status !== "APPROVED") throw conflict("The approval is no longer valid");
-        if (token.request_type === "CASUAL" && !token.allow_concurrent_issue) {
+        if (token.request_type === "CASUAL") {
           const activeIssue = (await client.query(
             `SELECT id FROM equipment_requests WHERE requester_id=$1 AND request_type='CASUAL'
              AND status IN ('ISSUED','RETURN_PENDING') AND id<>$2 LIMIT 1 FOR SHARE`,
             [token.requester_id, token.request_id],
           )).rows[0];
-          if (activeIssue) throw conflict("This student already has equipment issued. Return it before collecting another approved request");
+          if (activeIssue && !confirmConcurrentIssue) {
+            throw conflict(
+              "This student already has equipment issued. Confirm the additional handover to continue.",
+              { requiresIssuerConfirmation: true, activeIssueId: activeIssue.id },
+            );
+          }
+          if (activeIssue) {
+            await client.query("UPDATE equipment_requests SET allow_concurrent_issue=true,updated_at=now() WHERE id=$1", [token.request_id]);
+            await client.query(
+              `INSERT INTO audit_log(actor_id,action,entity_type,entity_id,before_state,after_state)
+               VALUES($1,'equipment_request.kiosk_concurrent_issue_confirmed','equipment_request',$2,NULL,$3::jsonb)`,
+              [actor.id, String(token.request_id), JSON.stringify({ activeIssueId: activeIssue.id, confirmedBy: actor.id })],
+            );
+          }
         }
         for (const item of items) {
           const sourceState = token.request_type === "CASUAL" ? "CASUAL_POOL" : "IN_INVENTORY";

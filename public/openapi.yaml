@@ -543,7 +543,24 @@ paths:
     post:
       tags: [Resources]
       summary: Validate exact asset scans, atomically change custody, and consume the request token
-      responses: { '200': { $ref: '#/components/responses/ItemResponse' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+                outcomes: { type: array, items: { type: object } }
+                assetScans: { type: array, items: { type: object } }
+                confirmConcurrentIssue:
+                  type: boolean
+                  default: false
+                  description: Inventory issuer confirmation for handing over another casual issue to a student who already holds equipment.
+      responses:
+        '200': { $ref: '#/components/responses/ItemResponse' }
+        '409': { $ref: '#/components/responses/ErrorResponse' }
   /equipment-module/audit:
     get:
       tags: [Administration]

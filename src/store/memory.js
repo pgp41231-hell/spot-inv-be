@@ -378,10 +378,13 @@ export class MemoryStore {
         : [...this.equipmentCustody.values()].filter((entry) => entry.sourceRequestId === request.parentRequestId && entry.equipmentId === equipment.id && entry.assetId && ["ISSUED_TO_STUDENT", "HELD_BY_TEAM"].includes(entry.state)).map((entry) => this.equipmentAssets.get(entry.assetId));
       return { ...item, tracking: equipment.tracking, assets: clone(assets.filter(Boolean)) };
     });
-    return clone({ ...token, ...request, purpose: token.purpose, items });
+    const activeIssue = token.purpose === "ISSUE" && request.requestType === "CASUAL"
+      ? [...this.equipmentRequests.values()].find((item) => item.id !== request.id && item.requesterId === request.requesterId && item.requestType === "CASUAL" && ["ISSUED", "RETURN_PENDING"].includes(item.status))
+      : null;
+    return clone({ ...token, ...request, purpose: token.purpose, items, concurrentIssueWarning: activeIssue || null });
   }
 
-  async redeemEquipmentQr(tokenHash, outcomes = [], assetScans = [], actor) {
+  async redeemEquipmentQr(tokenHash, outcomes = [], assetScans = [], actor, confirmConcurrentIssue = false) {
     if (!["inventory_kiosk", "admin"].includes(actor.role)) throw forbidden("Only the inventory kiosk can scan equipment QR codes");
     const preview = await this.inspectEquipmentQr(tokenHash);
     const request = this.equipmentRequests.get(preview.requestId);
@@ -389,9 +392,18 @@ export class MemoryStore {
     const outcomeMap = new Map(outcomes.map((item) => [item.equipmentId, item]));
     const scansFor = (equipmentId) => assetScans.filter((scan) => scan.equipmentId === equipmentId);
     if (preview.purpose === "ISSUE") {
-      if (request.requestType === "CASUAL" && !request.allowConcurrentIssue) {
+      if (request.requestType === "CASUAL") {
         const activeIssue = [...this.equipmentRequests.values()].find((item) => item.id !== request.id && item.requesterId === request.requesterId && item.requestType === "CASUAL" && ["ISSUED", "RETURN_PENDING"].includes(item.status));
-        if (activeIssue) throw conflict("This student already has equipment issued. Return it before collecting another approved request");
+        if (activeIssue && !confirmConcurrentIssue) {
+          throw conflict(
+            "This student already has equipment issued. Confirm the additional handover to continue.",
+            { requiresIssuerConfirmation: true, activeIssueId: activeIssue.id },
+          );
+        }
+        if (activeIssue) {
+          request.allowConcurrentIssue = true;
+          await this.appendAudit(actor, "equipment_request.kiosk_concurrent_issue_confirmed", "equipment_request", request.id, null, { activeIssueId: activeIssue.id, confirmedBy: actor.id });
+        }
       }
       for (const item of request.items) {
         const equipment = this.equipment.get(item.equipmentId);

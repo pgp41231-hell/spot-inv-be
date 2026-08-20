@@ -67,7 +67,12 @@ test("memory mode supports the casual request, approval, issue, and return lifec
   await store.decideEquipmentRequest(secondRequest.id, "approve", null, approver, true);
   assert.equal((await store.getEquipmentRequest(secondRequest.id)).allowConcurrentIssue, true);
   await store.createEquipmentQr({ requestId: secondRequest.id, purpose: "ISSUE", tokenHash: "second-issue-hash", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
-  await store.redeemEquipmentQr("second-issue-hash", [], [], kiosk);
+  assert.equal((await store.inspectEquipmentQr("second-issue-hash")).concurrentIssueWarning.id, request.id);
+  await assert.rejects(
+    () => store.redeemEquipmentQr("second-issue-hash", [], [], kiosk),
+    /Confirm the additional handover/,
+  );
+  await store.redeemEquipmentQr("second-issue-hash", [], [], kiosk, true);
   assert.equal((await store.listEquipmentInventory()).items[0].withStudentsQuantity, 6);
   const returned = await store.createEquipmentRequest({ requestType: "RETURN", parentRequestId: request.id, items: [{ equipmentId: "racquets", quantity: 4 }] }, student);
   await store.createEquipmentQr({ requestId: returned.id, purpose: "RETURN", tokenHash: "return-hash", expiresAt: new Date(Date.now() + 3_600_000).toISOString() });

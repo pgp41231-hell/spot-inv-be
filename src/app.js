@@ -421,9 +421,9 @@ export function createApp(options = {}) {
     res.json({ data: await store.inspectEquipmentQr(equipmentTokenHash(token)) });
   });
   app.post("/api/v1/equipment-module/kiosk/confirm", requireRoles("inventory_kiosk", "admin"), async (req, res) => {
-    const input = parse(z.object({ token: z.string().min(20), outcomes: z.array(returnOutcomeSchema).default([]), assetScans: z.array(assetScanSchema).default([]) }), req.body);
+    const input = parse(z.object({ token: z.string().min(20), outcomes: z.array(returnOutcomeSchema).default([]), assetScans: z.array(assetScanSchema).default([]), confirmConcurrentIssue: z.boolean().optional().default(false) }), req.body);
     verifyEquipmentToken(input.token, config.qr.secret);
-    res.json({ data: await store.redeemEquipmentQr(equipmentTokenHash(input.token), input.outcomes, input.assetScans, req.user) });
+    res.json({ data: await store.redeemEquipmentQr(equipmentTokenHash(input.token), input.outcomes, input.assetScans, req.user, input.confirmConcurrentIssue) });
   });
   app.get("/api/v1/equipment-module/audit", requireRoles("approver", "admin"), async (req, res) => {
     res.json({ data: await store.listEquipmentAudit(req.query) });
